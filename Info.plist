@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>          <string>Ballast</string>
+    <key>CFBundleIdentifier</key>          <string>cc.jorviksoftware.Ballast</string>
+    <key>CFBundleName</key>                <string>Ballast</string>
+    <key>CFBundleDisplayName</key>         <string>Ballast</string>
+    <key>CFBundleVersion</key>             <string>0.1.0</string>
+    <key>CFBundleShortVersionString</key>  <string>0.1.0</string>
+    <key>CFBundlePackageType</key>         <string>APPL</string>
+    <key>LSUIElement</key>                 <true/>
+    <!-- Core Audio process taps need macOS 14.2; the lock-free Synchronization
+         framework used by the audio engine needs 15.0. -->
+    <key>LSMinimumSystemVersion</key>      <string>15.0</string>
+    <key>NSHighResolutionCapable</key>     <true/>
+    <key>CFBundleIconFile</key>            <string>AppIcon</string>
+    <!-- Core Audio process taps are gated by the system audio-capture privacy
+         category (kTCCServiceAudioCapture), declared with this key — NOT the
+         microphone one. macOS prompts for it when levelling is first enabled. -->
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Ballast reads the system audio mix so it can measure loudness and keep every app at an even level. Audio is processed on-device in real time and never recorded, stored, or transmitted.</string>
+    <key>SUFeedURL</key>                   <string>https://jorviksoftware.cc/appcasts/ballast.xml</string>
+    <key>SUPublicEDKey</key>               <string>zVc7rs8EiLmlDAYpgaIItjnHtsCkvyVVub+I0/sSb3Q=</string>
+    <key>SUEnableAutomaticChecks</key>     <true/>
+    <key>SUScheduledCheckInterval</key>    <integer>86400</integer>
+</dict>
+</plist>

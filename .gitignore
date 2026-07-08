@@ -1,0 +1,28 @@
+# Build outputs
+*.app
+*.zip
+*.saver
+.build/
+build/
+_CodeSignature/
+*.o
+*.d
+
+# Xcode
+xcuserdata/
+*.xcodeproj/xcuserdata/
+DerivedData/
+*.xccheckout
+*.moved-aside
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Temp
+*.swp
+*.swo
+
+# Vendored framework (fetched at build time, not tracked)
+Sparkle.framework/
