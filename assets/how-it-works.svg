@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 680" role="img"
+     aria-label="How Ballast levels audio: every app's audio is captured by a Core Audio process tap that mutes the original path, buffered through an aggregate device and lock-free ring clocked by the output device, then measured and levelled per track by the loudness engine, which learns each track into an on-disk library, before playing to your speakers or headphones.">
+  <title>How Ballast levels your audio</title>
+  <style>
+    text { font-family: system-ui, -apple-system, sans-serif; }
+    .h { fill: #004080; font-weight: 700; font-size: 14px; }
+    .b { fill: #3a4655; font-size: 11px; }
+    .t { fill: #8a97a6; font-size: 10px; font-style: italic; }
+    .title { fill: #004080; font-weight: 700; font-size: 19px; }
+    .sub { fill: #6b7785; font-size: 11.5px; }
+    .lab { fill: #6b7785; font-size: 10px; }
+    .box { fill: #ffffff; stroke: #c9d6e5; stroke-width: 1.5; }
+    .arrow { stroke: #6b7785; stroke-width: 2; fill: none; }
+  </style>
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="6.5" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L8,4 L0,8 z" fill="#6b7785"/>
+    </marker>
+  </defs>
+
+  <rect x="4" y="4" width="592" height="672" rx="16" fill="#ffffff" stroke="#e6ebf1" stroke-width="1.5"/>
+
+  <text x="300" y="38" text-anchor="middle" class="title">How Ballast levels your audio</text>
+  <text x="300" y="57" text-anchor="middle" class="sub">driver-free, measured and levelled entirely on-device</text>
+
+  <!-- Sources -->
+  <rect x="100" y="82" width="260" height="64" rx="11" class="box"/>
+  <text x="230" y="107" text-anchor="middle" class="h">Every app's audio</text>
+  <text x="230" y="125" text-anchor="middle" class="b">Apple Music, Spotify, browser, system</text>
+  <text x="230" y="140" text-anchor="middle" class="t">the mixed output</text>
+
+  <line x1="230" y1="146" x2="230" y2="190" class="arrow" marker-end="url(#a)"/>
+  <text x="238" y="172" class="lab">captured, original muted</text>
+
+  <!-- Process tap -->
+  <rect x="100" y="192" width="260" height="64" rx="11" class="box"/>
+  <text x="230" y="217" text-anchor="middle" class="h">Core Audio process tap</text>
+  <text x="230" y="235" text-anchor="middle" class="b">captures the mix, mutes the direct path</text>
+  <text x="230" y="250" text-anchor="middle" class="t">AudioHardwareCreateProcessTap</text>
+
+  <line x1="230" y1="256" x2="230" y2="300" class="arrow" marker-end="url(#a)"/>
+
+  <!-- Aggregate + ring (connective, inverted) -->
+  <rect x="100" y="302" width="260" height="64" rx="11" fill="#d6e2f0" stroke="#c9d6e5" stroke-width="1.5"/>
+  <text x="230" y="327" text-anchor="middle" class="h">Aggregate device + ring</text>
+  <text x="230" y="345" text-anchor="middle" style="fill:#004080;font-size:11px">clocked by your output device</text>
+  <text x="230" y="360" text-anchor="middle" style="fill:#35506e;font-size:10px;font-style:italic">input IOProc -&gt; lock-free ring -&gt; output IOProc</text>
+
+  <line x1="230" y1="366" x2="230" y2="410" class="arrow" marker-end="url(#a)"/>
+
+  <!-- Loudness engine -->
+  <rect x="100" y="412" width="260" height="80" rx="11" class="box"/>
+  <text x="230" y="437" text-anchor="middle" class="h">Loudness engine</text>
+  <text x="230" y="455" text-anchor="middle" class="b">measures loudness (EBU R128) and</text>
+  <text x="230" y="470" text-anchor="middle" class="b">levels each track; guards the peak ceiling</text>
+  <text x="230" y="485" text-anchor="middle" class="t">K-weighting, look-ahead limiter</text>
+
+  <!-- Loudness library (store) -->
+  <rect x="382" y="412" width="196" height="80" rx="11" class="box"/>
+  <text x="480" y="437" text-anchor="middle" class="h">Loudness library</text>
+  <text x="480" y="455" text-anchor="middle" class="b">per-track loudness,</text>
+  <text x="480" y="470" text-anchor="middle" class="b">saved on disk</text>
+  <text x="480" y="485" text-anchor="middle" class="t">learns as you listen</text>
+  <line x1="360" y1="438" x2="380" y2="438" class="arrow" marker-end="url(#a)"/>
+  <line x1="382" y1="466" x2="362" y2="466" class="arrow" marker-end="url(#a)"/>
+
+  <line x1="230" y1="492" x2="230" y2="540" class="arrow" marker-end="url(#a)"/>
+  <text x="238" y="520" class="lab">levelled</text>
+
+  <!-- Output (terminal, most important) -->
+  <rect x="100" y="542" width="260" height="62" rx="11" fill="#004080"/>
+  <text x="230" y="570" text-anchor="middle" style="fill:#ffffff;font-weight:700;font-size:14px">Your speakers or headphones</text>
+  <text x="230" y="590" text-anchor="middle" style="fill:#dce6f2;font-size:11px">every track at your comfort level</text>
+
+  <text x="300" y="642" text-anchor="middle" class="t">Apple Music and Spotify announce track changes, so Ballast knows when to switch a track's learned level.</text>
+</svg>

@@ -492,6 +492,13 @@ final class BallastEngine {
         stopDebugTimer()
         teardownGraph()
         if buildGraph() {
+            // Re-apply the current track's learned level so it keeps its gain
+            // across the switch (the rebuild reset the DSP). The library itself
+            // is untouched — loudness is the track's own, not the device's.
+            if let key = currentKey {
+                let known = library.lookup(key: key, durationMS: currentDurationMS)
+                processor.beginTrack(knownIntegratedLUFS: known?.integratedLUFS)
+            }
             startDebugTimerIfNeeded()
         } else {
             teardownGraph()

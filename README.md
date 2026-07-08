@@ -25,7 +25,7 @@ Loudness is measured with **EBU R128 / ITU-R BS.1770** (LUFS) — the same stand
 | Loud vs quiet tracks | Land at the same comfortable loudness |
 | Dynamics within a track | Preserved — Ballast does not compress the quiet-to-loud swing |
 
-When you switch output device — headphones, a speaker — Ballast rebuilds itself around the new device automatically.
+When you switch output device — headphones, a speaker — Ballast rebuilds itself around the new device automatically. Your learned library carries over untouched: a track's loudness is measured from the source, before playback, so nothing is ever relearned per device.
 
 ## Menu Bar
 
@@ -71,15 +71,7 @@ Requires GNU Make 4.x (`brew install make` → `gmake`). Signed, notarised relea
 
 Driver-free, two real-time callbacks sharing one hardware clock:
 
-```
-every other app ──▶ global process tap (muted, self-excluded)
-                         │
-        input IOProc ◀───┘   (tap aggregate, clocked by the output device)
-                         ▼
-                   lock-free ring
-                         ▼
-       output IOProc ─▶ LoudnessProcessor ─▶ default output device
-```
+![How Ballast levels your audio: app audio is captured by a muted process tap, buffered through an aggregate device and lock-free ring clocked by the output device, levelled per track by the loudness engine that learns each track into an on-disk library, then played to your speakers.](assets/how-it-works.svg)
 
 - A **global process tap** (`AudioHardwareCreateProcessTap`, `.mutedWhenTapped`, excluding Ballast itself) captures the system mix and mutes its direct path, so you hear only the processed version.
 - A **private aggregate device** clocked by the real output device carries the tap; an input IOProc drains it into a lock-free ring, and an output IOProc on the real device applies the DSP and plays it. Both callbacks run on the same clock, so the ring only absorbs their phase offset.

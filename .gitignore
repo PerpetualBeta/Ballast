@@ -26,3 +26,6 @@ DerivedData/
 
 # Vendored framework (fetched at build time, not tracked)
 Sparkle.framework/
+
+# Local Claude Code settings (not shared)
+.claude/
