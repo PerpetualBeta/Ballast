@@ -14,6 +14,8 @@ enum BallastSettings {
         static let enabled              = "levellingEnabled"
         static let targetLoudness       = "targetLoudnessLUFS"
         static let maxGain              = "maxGainDB"
+        static let showTrackTitle       = "showTrackTitle"
+        static let maxTitleLength       = "maxTitleLength"
     }
 
     // MARK: Design bounds & defaults
@@ -35,10 +37,16 @@ enum BallastSettings {
     /// codecs from clipping.
     static let peakCeilingDBFS: Double = -1.0
 
+    /// Menu-bar track-title display: opt-in, and its maximum length in
+    /// characters (grapheme clusters) before the title is truncated.
+    static let maxTitleLengthDefault = 30
+    static let maxTitleLengthRange: ClosedRange<Int> = 10 ... 60
+
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
             Key.targetLoudness: targetLoudnessDefault,
             Key.maxGain: maxGainDefault,
+            Key.maxTitleLength: maxTitleLengthDefault,
             // `enabled` is deliberately NOT registered: a missing key reads as
             // false, so Ballast starts inert and only taps the system audio
             // once the user opts in (which is also when macOS prompts for the
@@ -61,6 +69,16 @@ enum BallastSettings {
     static var maxGain: Double {
         get { UserDefaults.standard.double(forKey: Key.maxGain) }
         set { UserDefaults.standard.set(newValue.clamped(to: maxGainRange), forKey: Key.maxGain) }
+    }
+
+    static var showTrackTitle: Bool {
+        get { UserDefaults.standard.bool(forKey: Key.showTrackTitle) }
+        set { UserDefaults.standard.set(newValue, forKey: Key.showTrackTitle) }
+    }
+
+    static var maxTitleLength: Int {
+        get { UserDefaults.standard.integer(forKey: Key.maxTitleLength) }
+        set { UserDefaults.standard.set(min(max(newValue, maxTitleLengthRange.lowerBound), maxTitleLengthRange.upperBound), forKey: Key.maxTitleLength) }
     }
 }
 

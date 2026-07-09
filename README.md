@@ -37,11 +37,14 @@ The waveform icon shows whether levelling is on. Click it for:
 - **Re-level Now** — re-measure the current audio (for sources that don't broadcast track changes, e.g. a browser)
 - **Check for Updates…**, **Settings…**, **About**
 
+The current track's title can optionally be shown to the right of the icon (Settings → Menu Bar) — handy as a lightweight now-playing display, so it can stand in for a separate one.
+
 ## Settings
 
 - **Comfort level** — a simple *Quieter ←→ Louder* slider (the loudness target; −16 LUFS by default)
 - **Maximum adjustment** — caps how far Ballast will push any track (±12 dB by default)
 - **Now** — live output device, this track's loudness, and the current adjustment
+- **Show current track title** — display the playing track's title to the right of the menu-bar icon, with an adjustable maximum length; longer titles are trimmed at a word boundary with an ellipsis (UTF-8 safe), and nothing is shown while paused or stopped. Off by default.
 - **Permission** — audio-capture status, with a button to grant it or open System Settings
 - **Show icon in menu bar** (macOS 14–15 only), optional **background pill**, and **Launch at Login**
 

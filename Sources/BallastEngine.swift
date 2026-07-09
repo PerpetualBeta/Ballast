@@ -33,6 +33,10 @@ final class BallastEngine {
     /// permission grant completes.
     var stateDidChange: (() -> Void)?
 
+    /// Called on the main thread when the current track or its play/pause
+    /// state changes, so the menu-bar title can refresh.
+    var trackDidChange: (() -> Void)?
+
     private var tapID = AudioObjectID(0)
     private var inputAggregateID = AudioObjectID(0)
     private var outputDeviceID = AudioObjectID(0)
@@ -60,6 +64,8 @@ final class BallastEngine {
 
     var libraryCount: Int { library.count }
     var currentTrackKnown: Bool { processor.isKnownTrack }
+    private(set) var isPlaying = false
+    var currentTrackTitle: String? { currentTitle }
 
     var currentOutputDeviceName: String? { outputDeviceName }
 
@@ -123,6 +129,7 @@ final class BallastEngine {
         BallastSettings.isEnabled = false
         statusMessage = "Inactive"
         outputDeviceName = nil
+        isPlaying = false
         blLog("engine stopped")
         stateDidChange?()
     }
@@ -180,16 +187,28 @@ final class BallastEngine {
     private func handlePlayerInfo(_ note: Notification) {
         guard isActive else { return }
         let info = note.userInfo ?? [:]
-        // Skip pause/stop — only a playing track should (re-)level.
-        if let state = info["Player State"] as? String,
-           state.caseInsensitiveCompare("Playing") != .orderedSame {
+        let state = (info["Player State"] as? String) ?? ""
+        // An empty state is treated as playing (both apps normally send one).
+        let playing = state.isEmpty || state.caseInsensitiveCompare("Playing") == .orderedSame
+
+        guard playing else {
+            // Paused or stopped: hide the title, but keep the track loaded so
+            // resuming the same track neither re-levels nor re-learns it.
+            if isPlaying { isPlaying = false; trackDidChange?() }
             return
         }
+
         guard let id = trackIdentity(note) else { return }
-        if id.key == currentKey { return }   // dedup: duplicate notification / same track
+        if id.key == currentKey {
+            // Same track: a duplicate notification, or a resume after pause.
+            if !isPlaying { isPlaying = true; trackDidChange?() }
+            return
+        }
 
         finalizeCurrentTrack()               // learn the track that just ended
         startTrack(id)                       // apply/learn the new one
+        isPlaying = true
+        trackDidChange?()
     }
 
     private func startTrack(_ id: TrackIdentity) {

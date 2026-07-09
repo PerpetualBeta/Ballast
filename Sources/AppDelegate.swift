@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Refresh the icon/menu whenever the engine's state changes — including
         // after the asynchronous audio-capture permission grant.
         engine.stateDidChange = { [weak self] in self?.updateIcon() }
+        engine.trackDidChange = { [weak self] in self?.updateStatusTitle() }
 
         createStatusItem()
         _ = sparkleUpdater  // forces lazy init so Sparkle starts at launch
@@ -106,6 +107,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let image = JorvikMenuBarPill.icon(symbolName: symbolName, accessibilityDescription: "Ballast")
             ?? JorvikMenuBarPill.icon(symbolName: "waveform", accessibilityDescription: "Ballast")
         statusItem?.button?.image = image
+        updateStatusTitle()
+    }
+
+    /// Shows the current track title to the right of the icon when enabled and
+    /// a track is actually playing; icon-only otherwise (no track, paused, or
+    /// title display off).
+    func updateStatusTitle() {
+        guard let button = statusItem?.button else { return }
+        if BallastSettings.showTrackTitle, engine.isActive, engine.isPlaying,
+           let raw = engine.currentTrackTitle, !raw.isEmpty {
+            button.title = " " + Self.truncateTitle(raw, max: BallastSettings.maxTitleLength)
+            button.imagePosition = .imageLeft
+        } else {
+            button.title = ""
+            button.imagePosition = .imageOnly
+        }
+    }
+
+    /// Truncate to `max` grapheme clusters at the nearest whitespace to the
+    /// left of the limit, then append an ellipsis. UTF-8 / emoji safe (it
+    /// counts Characters, not bytes). If the first word alone exceeds the
+    /// limit, it hard-cuts at `max`.
+    static func truncateTitle(_ title: String, max: Int) -> String {
+        guard title.count > max else { return title }
+        let prefix = title.prefix(max)
+        if let wsIndex = prefix.lastIndex(where: { $0.isWhitespace }) {
+            var head = prefix[..<wsIndex]
+            while let last = head.last, last.isWhitespace { head = head.dropLast() }
+            if !head.isEmpty { return String(head) + "\u{2026}" }
+        }
+        return String(prefix) + "\u{2026}"
     }
 
     // MARK: - Dynamic menu (NSMenuDelegate)

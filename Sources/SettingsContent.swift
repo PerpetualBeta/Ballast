@@ -10,12 +10,16 @@ struct BallastSettingsContent: View {
     @State private var enabled: Bool
     @State private var target: Double
     @State private var maxGain: Double
+    @State private var showTitle: Bool
+    @State private var maxTitleLen: Int
 
     init(delegate: AppDelegate) {
         self.delegate = delegate
         _enabled = State(initialValue: delegate.engine.isActive)
         _target = State(initialValue: BallastSettings.targetLoudness)
         _maxGain = State(initialValue: BallastSettings.maxGain)
+        _showTitle = State(initialValue: BallastSettings.showTrackTitle)
+        _maxTitleLen = State(initialValue: BallastSettings.maxTitleLength)
     }
 
     var body: some View {
@@ -66,6 +70,25 @@ struct BallastSettingsContent: View {
 
         Section("Now") {
             MeterView(engine: delegate.engine)
+        }
+
+        Section("Menu Bar") {
+            Toggle("Show current track title", isOn: $showTitle)
+                .onChange(of: showTitle) { _, v in
+                    BallastSettings.showTrackTitle = v
+                    delegate.updateStatusTitle()
+                }
+            if showTitle {
+                Stepper(value: $maxTitleLen, in: BallastSettings.maxTitleLengthRange) {
+                    Text("Maximum length: \(maxTitleLen) characters")
+                }
+                .onChange(of: maxTitleLen) { _, v in
+                    BallastSettings.maxTitleLength = v
+                    delegate.updateStatusTitle()
+                }
+                Text("Titles longer than this are trimmed at a word boundary and end with an ellipsis. Nothing is shown while playback is paused or stopped.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
 
         // Standard Jorvik menu-bar sections.
