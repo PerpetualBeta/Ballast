@@ -107,7 +107,9 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
 
     func refreshPalette() {
         let source = VisualizerColourSource(rawValue: BallastSettings.visualizerColourSource) ?? .builtin
-        renderer?.colours = WallpaperPalette.colours(source: source, screen: window?.screen)
+        let cols = WallpaperPalette.colours(source: source, screen: window?.screen)
+        renderer?.colours = cols
+        nowPlayingModel?.palette = cols
     }
 
     // MARK: Build

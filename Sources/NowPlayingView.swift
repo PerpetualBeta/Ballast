@@ -12,13 +12,14 @@ struct NowPlayingStats: Equatable {
     var output = "\u{2014}"
     var plays = 0
     var love: Double?
+    var audioPresent = false
 }
 
-/// Tracks the currently-playing track (metadata + artwork) and Ballast's live
-/// stats for the visualiser's Now Playing mode. Metadata refreshes on the
-/// track-change notifications the engine uses; stats are polled from the engine
-/// on a timer (an ObservableObject drives re-renders reliably, where a hosted
-/// TimelineView did not).
+/// Tracks the currently-playing track (metadata + artwork), whether it's
+/// playing or paused, and Ballast's live stats for the Now Playing mode.
+/// Metadata refreshes on the engine's track-change notifications; stats + the
+/// idle-gradient phase are driven by a timer (an ObservableObject re-renders
+/// reliably where a hosted TimelineView did not).
 @MainActor
 final class NowPlayingModel: ObservableObject {
     @Published var artwork: NSImage?
@@ -26,7 +27,10 @@ final class NowPlayingModel: ObservableObject {
     @Published var artist = ""
     @Published var album = ""
     @Published var hasTrack = false
+    @Published var isPlaying = false
     @Published var stats = NowPlayingStats()
+    @Published var phase: Double = 0
+    @Published var palette: [SIMD3<Float>]?
 
     weak var engine: BallastEngine?
     private var observers: [NSObjectProtocol] = []
@@ -42,7 +46,7 @@ final class NowPlayingModel: ObservableObject {
             }
         }
         if timer == nil {
-            let t = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in self?.refreshStats() }
+            let t = Timer(timeInterval: 0.08, repeats: true) { [weak self] _ in self?.tick() }
             RunLoop.main.add(t, forMode: .common)
             timer = t
         }
@@ -57,6 +61,11 @@ final class NowPlayingModel: ObservableObject {
         timer?.invalidate(); timer = nil
     }
 
+    private func tick() {
+        if !hasTrack { phase += 0.08 }        // drift only while the gradient shows
+        refreshStats()
+    }
+
     func refresh() {
         NowPlayingProbe.nowPlaying { [weak self] info in
             guard let self else { return }
@@ -65,6 +74,7 @@ final class NowPlayingModel: ObservableObject {
             self.artist = info?.artist ?? ""
             self.album = info?.album ?? ""
             self.hasTrack = (info != nil)
+            self.isPlaying = info?.isPlaying ?? false
         }
     }
 
@@ -79,28 +89,46 @@ final class NowPlayingModel: ObservableObject {
             learned: e.libraryCount,
             output: e.currentOutputDeviceName ?? "\u{2014}",
             plays: e.currentTrackPlays,
-            love: e.currentTrackLove
+            love: e.currentTrackLove,
+            audioPresent: e.hasAudioSignal
         )
         if next != stats { stats = next }
     }
 }
 
-/// Album artwork as the hero, plus track details, a "love" rating (how often
-/// you play this track vs the rest of your library), the play count, and
-/// Ballast's live level readout. Sizes derive from the smaller window dimension
-/// and the block is centred, so it scales without clipping.
+/// The Now Playing mode. States: a held (dimmed) card when paused, the full
+/// card when playing a known source, a "Playing" readout for metadata-less
+/// audio (a browser), a "Levelling is off" note, or — when simply stopped — a
+/// slow wallpaper-tinted drifting gradient and nothing else.
 struct NowPlayingView: View {
     @ObservedObject var model: NowPlayingModel
+
+    private enum Screen { case off, track, playing, idle }
+    private var screen: Screen {
+        if !model.stats.active { return .off }
+        if model.hasTrack { return .track }
+        if model.stats.audioPresent { return .playing }
+        return .idle
+    }
+    private var live: Bool { model.stats.active && (model.isPlaying || model.stats.audioPresent) }
 
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
             let s = min(w, h)
             ZStack {
-                background(s)
-                content(w: w, h: h, s: s)
-                    .padding(s * 0.06)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                backdrop(s)
+                switch screen {
+                case .track:
+                    trackContent(w: w, h: h, s: s).padding(s * 0.06).frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .playing:
+                    playingContent(s).frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .off:
+                    Text("Levelling is off").font(.system(size: s * 0.07, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.7)).frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .idle:
+                    EmptyView()
+                }
             }
             .frame(width: w, height: h)
             .clipped()
@@ -108,71 +136,95 @@ struct NowPlayingView: View {
         .ignoresSafeArea()
     }
 
-    @ViewBuilder private func content(w: CGFloat, h: CGFloat, s: CGFloat) -> some View {
+    // MARK: Backdrop
+
+    @ViewBuilder private func backdrop(_ s: CGFloat) -> some View {
+        if screen == .track, let art = model.artwork {
+            Image(nsImage: art).resizable().scaledToFill()
+                .blur(radius: s * 0.12).overlay(Color.black.opacity(model.isPlaying ? 0.5 : 0.62))
+        } else {
+            driftingGradient()
+        }
+    }
+
+    private func driftingGradient() -> some View {
+        let cols = gradientColors()
+        let a = model.phase * 0.15
+        let start = UnitPoint(x: 0.5 + 0.45 * cos(a), y: 0.5 + 0.45 * sin(a * 0.8))
+        let end = UnitPoint(x: 0.5 - 0.45 * cos(a * 1.1), y: 0.5 - 0.45 * sin(a))
+        return LinearGradient(colors: cols, startPoint: start, endPoint: end)
+    }
+
+    private func gradientColors() -> [Color] {
+        if let p = model.palette, p.count >= 3 {
+            return [tint(p[0], 0.5), tint(p[1], 0.32), tint(p[2], 0.55)]
+        }
+        return [Color(red: 0.10, green: 0.11, blue: 0.14),
+                Color(red: 0.05, green: 0.06, blue: 0.10),
+                Color(red: 0.09, green: 0.10, blue: 0.13)]
+    }
+
+    private func tint(_ c: SIMD3<Float>, _ scale: Double) -> Color {
+        Color(.sRGB, red: Double(c.x) * scale, green: Double(c.y) * scale, blue: Double(c.z) * scale, opacity: 1)
+    }
+
+    // MARK: Track (playing or paused)
+
+    @ViewBuilder private func trackContent(w: CGFloat, h: CGFloat, s: CGFloat) -> some View {
+        let paused = !model.isPlaying
         if w > h * 1.25 {
-            HStack(spacing: s * 0.06) { art(min(h * 0.72, w * 0.4)); details(s) }
+            HStack(spacing: s * 0.06) { art(min(h * 0.72, w * 0.4), paused: paused); details(s, paused: paused) }
         } else {
-            VStack(spacing: s * 0.05) { art(min(h * 0.45, w * 0.72)); details(s) }
+            VStack(spacing: s * 0.05) { art(min(h * 0.45, w * 0.72), paused: paused); details(s, paused: paused) }
         }
     }
 
-    @ViewBuilder private func background(_ s: CGFloat) -> some View {
-        if let art = model.artwork {
-            Image(nsImage: art).resizable().scaledToFill().blur(radius: s * 0.12).overlay(Color.black.opacity(0.5))
-        } else {
-            LinearGradient(colors: [Color(white: 0.08), Color(white: 0.16)], startPoint: .top, endPoint: .bottom)
-        }
-    }
-
-    private func art(_ side: CGFloat) -> some View {
+    private func art(_ side: CGFloat, paused: Bool) -> some View {
         Group {
             if let a = model.artwork {
                 Image(nsImage: a).resizable().scaledToFill()
             } else {
-                ZStack {
-                    Color(white: 0.18)
-                    Image(systemName: "music.note").font(.system(size: side * 0.3)).foregroundStyle(.white.opacity(0.35))
-                }
+                ZStack { Color(white: 0.18); Image(systemName: "music.note").font(.system(size: side * 0.3)).foregroundStyle(.white.opacity(0.35)) }
             }
         }
         .frame(width: side, height: side)
         .clipShape(RoundedRectangle(cornerRadius: side * 0.06, style: .continuous))
         .shadow(color: .black.opacity(0.5), radius: side * 0.05, y: side * 0.02)
+        .opacity(paused ? 0.72 : 1)
     }
 
-    private func details(_ s: CGFloat) -> some View {
+    private func details(_ s: CGFloat, paused: Bool) -> some View {
         let st = model.stats
         return VStack(alignment: .leading, spacing: s * 0.026) {
-            if model.hasTrack {
-                Text(model.title).font(.system(size: s * 0.088, weight: .bold))
-                    .lineLimit(1).minimumScaleFactor(0.5).foregroundStyle(.white)
-                Text(model.artist).font(.system(size: s * 0.058))
-                    .lineLimit(1).minimumScaleFactor(0.6).foregroundStyle(.white.opacity(0.85))
-                if !model.album.isEmpty {
-                    Text(model.album).font(.system(size: s * 0.046))
-                        .lineLimit(1).minimumScaleFactor(0.6).foregroundStyle(.white.opacity(0.6))
-                }
-                loveLine(st, s)
-            } else {
-                Text("Nothing playing").font(.system(size: s * 0.07, weight: .semibold)).foregroundStyle(.white.opacity(0.8))
+            if paused {
+                Text("PAUSED").font(.system(size: s * 0.032, weight: .heavy)).tracking(1.5)
+                    .padding(.horizontal, s * 0.03).padding(.vertical, s * 0.012)
+                    .background(.white.opacity(0.16), in: Capsule()).foregroundStyle(.white.opacity(0.9))
             }
-            statsPanel(st, s).padding(.top, s * 0.03)
+            Text(model.title).font(.system(size: s * 0.088, weight: .bold))
+                .lineLimit(1).minimumScaleFactor(0.5).foregroundStyle(.white)
+            Text(model.artist).font(.system(size: s * 0.058))
+                .lineLimit(1).minimumScaleFactor(0.6).foregroundStyle(.white.opacity(0.85))
+            if !model.album.isEmpty {
+                Text(model.album).font(.system(size: s * 0.046))
+                    .lineLimit(1).minimumScaleFactor(0.6).foregroundStyle(.white.opacity(0.6))
+            }
+            loveLine(st, s)
+            statsPanel(st, s, includeThisTrack: true).padding(.top, s * 0.03)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(paused ? 0.85 : 1)
     }
 
-    /// Hearts (play-count percentile vs the library) + the play count.
     @ViewBuilder private func loveLine(_ st: NowPlayingStats, _ s: CGFloat) -> some View {
         if st.plays > 0 {
             HStack(spacing: s * 0.016) {
                 ForEach(0..<5) { i in
                     Image(systemName: i < heartCount(st.love) ? "heart.fill" : "heart")
-                        .font(.system(size: s * 0.04))
-                        .foregroundStyle(Color(red: 0.96, green: 0.36, blue: 0.46))
+                        .font(.system(size: s * 0.04)).foregroundStyle(Color(red: 0.96, green: 0.36, blue: 0.46))
                 }
                 Text(st.plays == 1 ? "1 play" : "\(st.plays) plays")
-                    .font(.system(size: s * 0.044)).foregroundStyle(.white.opacity(0.75))
-                    .padding(.leading, s * 0.02)
+                    .font(.system(size: s * 0.044)).foregroundStyle(.white.opacity(0.75)).padding(.leading, s * 0.02)
             }
             .padding(.top, s * 0.008)
         }
@@ -183,12 +235,26 @@ struct NowPlayingView: View {
         return min(5, max(1, Int((love * 4).rounded()) + 1))
     }
 
-    private func statsPanel(_ st: NowPlayingStats, _ s: CGFloat) -> some View {
+    // MARK: Playing (metadata-less audio, e.g. a browser)
+
+    private func playingContent(_ s: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: s * 0.03) {
+            Text("Playing").font(.system(size: s * 0.09, weight: .bold)).foregroundStyle(.white)
+            statsPanel(model.stats, s, includeThisTrack: false)
+        }
+        .padding(s * 0.06)
+    }
+
+    // MARK: Stats panel
+
+    private func statsPanel(_ st: NowPlayingStats, _ s: CGFloat, includeThisTrack: Bool) -> some View {
         VStack(spacing: s * 0.015) {
-            statRow("Source", st.active && st.source > -100 ? String(format: "%.1f LUFS", st.source) : "\u{2014}", s)
-            statRow("Adjustment", st.active ? String(format: "%+.1f dB", st.gain) : "\u{2014}", s)
+            statRow("Source", live && st.source > -100 ? String(format: "%.1f LUFS", st.source) : "\u{2014}", s)
+            statRow("Adjustment", live ? String(format: "%+.1f dB", st.gain) : "\u{2014}", s)
             statRow("Target", String(format: "%.0f LUFS", st.target), s)
-            statRow("This track", st.active ? (st.known ? "Known \u{2014} fixed level" : "Learning\u{2026}") : "\u{2014}", s)
+            if includeThisTrack {
+                statRow("This track", st.known ? "Known \u{2014} fixed level" : "Learning\u{2026}", s)
+            }
             statRow("Learned", "\(st.learned) tracks", s)
             statRow("Output", st.output, s)
         }
@@ -201,8 +267,7 @@ struct NowPlayingView: View {
         HStack(spacing: s * 0.04) {
             Text(label).font(.system(size: s * 0.042)).foregroundStyle(.white.opacity(0.6))
             Spacer(minLength: 0)
-            Text(value).font(.system(size: s * 0.042, design: .rounded)).monospacedDigit()
-                .lineLimit(1).foregroundStyle(.white)
+            Text(value).font(.system(size: s * 0.042, design: .rounded)).monospacedDigit().lineLimit(1).foregroundStyle(.white)
         }
     }
 }

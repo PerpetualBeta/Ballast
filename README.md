@@ -64,7 +64,7 @@ Five styles:
 - **Spectrum** — an LED-style analyser with slow-falling peak-hold caps.
 - **Oscilloscope** — smooth waveform traces, stacked by frequency band.
 - **VU Meters** — a pair of analogue VU meters with ballistic needles and a real numbered dB scale.
-- **Now Playing** — the album artwork as a backdrop and hero, with the track details, a **“love” rating** (hearts, from how often you play a track versus the rest of your library) and **play count**, plus Ballast's live level readout (source loudness, adjustment, target, known/learning, learned count) — a home for those stats outside the menu bar.
+- **Now Playing** — the album artwork as a backdrop and hero, with the track details, a **“love” rating** (hearts, from how often you play a track versus the rest of your library) and **play count**, plus Ballast's live level readout (source loudness, adjustment, target, known/learning, learned count) — a home for those stats outside the menu bar. When paused it holds the track (dimmed); when nothing's playing it settles into a calm, wallpaper-tinted drifting gradient.
 
 The three generative styles are procedural Metal shaders (no image assets); the VU meters are vector-drawn with Core Graphics and Now Playing is a SwiftUI view. **Colour** (Settings → Visualiser) can follow your desktop wallpaper — *Match* its dominant tone or take its *Complement* — re-deriving when you change wallpaper or Space. **Keep window on top** floats it above other windows.
 

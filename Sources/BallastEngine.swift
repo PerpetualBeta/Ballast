@@ -73,6 +73,10 @@ final class BallastEngine {
         guard let key = currentKey else { return nil }
         return library.lovePercentile(key: key, durationMS: currentDurationMS)
     }
+    /// True when the tap is carrying real audio (above the ~-87 dB silent noise
+    /// floor) — tells "playing" from paused/stopped for sources without track
+    /// metadata (e.g. a browser).
+    var hasAudioSignal: Bool { isActive && processor.meterSourceLoudness > -60 }
     private(set) var isPlaying = false
     var currentTrackTitle: String? { currentTitle }
 
