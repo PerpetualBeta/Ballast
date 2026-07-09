@@ -58,6 +58,10 @@ Reading the system audio mix goes through macOS's audio-capture privacy gate (it
 
 Audio is measured and processed **entirely on-device, in real time**. Ballast never records, stores, or transmits any audio, and has no telemetry. The only thing written to disk is your loudness library (track loudness values + titles) at `~/Library/Application Support/Ballast/library.json`.
 
+### Automation (optional)
+
+The first time levelling starts with Apple Music or Spotify playing, macOS asks to let Ballast **control** that app. It's used only to read the *currently playing* track at start-up, so Ballast can apply that track's learned level immediately instead of waiting for the next track change. Decline it and Ballast just waits for the next change — everything else works the same.
+
 ## Building from Source
 
 Ballast is a Swift Package (no Xcode project).

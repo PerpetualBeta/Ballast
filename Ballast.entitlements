@@ -11,5 +11,10 @@
          audio-input access behind this entitlement. -->
     <key>com.apple.security.device.audio-input</key>
     <true/>
+
+    <!-- Query Apple Music / Spotify (AppleScript) for the currently-playing
+         track so its learned level can be applied on start-up. -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
 </dict>
 </plist>

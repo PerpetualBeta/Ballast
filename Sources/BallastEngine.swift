@@ -108,6 +108,7 @@ final class BallastEngine {
             registerDeviceChangeListener()
             registerTrackChangeObservers()
             startDebugTimerIfNeeded()
+            probeCurrentTrack()
             blLog("engine started — \(statusMessage)")
         } else {
             teardownGraph()
@@ -148,6 +149,38 @@ final class BallastEngine {
         guard isActive else { return }
         blLog("manual re-level")
         processor.triggerReacquire()
+    }
+
+    // MARK: Level the currently-playing track on start-up
+
+    /// One-shot: ask a running Music/Spotify what is playing now and apply that
+    /// track's learned level immediately, rather than waiting for the next
+    /// track-change notification.
+    private func probeCurrentTrack() {
+        NowPlayingProbe.query { [weak self] result in
+            guard let self, let result else { return }
+            self.applyProbeResult(result)
+        }
+    }
+
+    private func applyProbeResult(_ r: NowPlayingProbe.Result) {
+        // A real notification (or a stop) may have arrived while the async query
+        // ran — if so, it wins and we leave it alone.
+        guard isActive, currentKey == nil else { return }
+        let title = r.title.isEmpty ? nil : r.title
+        let artist = r.artist.isEmpty ? nil : r.artist
+        let key: String
+        switch r.source {
+        case .music:
+            key = UInt64(r.trackID, radix: 16).map { "am:\(Int64(bitPattern: $0))" }
+                ?? "cx:\(r.title)·\(r.artist)"
+        case .spotify:
+            key = "sp:\(r.trackID)"
+        }
+        startTrack(TrackIdentity(key: key, durationMS: r.durationMS, title: title, artist: artist))
+        isPlaying = true
+        blLog("probe: applied current track \(title ?? "?") -> \(key)")
+        trackDidChange?()
     }
 
     // MARK: Track-change signals (public, no MediaRemote entitlement needed)

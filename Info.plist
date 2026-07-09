@@ -20,6 +20,8 @@
          microphone one. macOS prompts for it when levelling is first enabled. -->
     <key>NSAudioCaptureUsageDescription</key>
     <string>Ballast reads the system audio mix so it can measure loudness and keep every app at an even level. Audio is processed on-device in real time and never recorded, stored, or transmitted.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Ballast checks Apple Music and Spotify for the track playing right now, so it can apply that track's learned level as soon as you start it.</string>
     <key>SUFeedURL</key>                   <string>https://jorviksoftware.cc/appcasts/ballast.xml</string>
     <key>SUPublicEDKey</key>               <string>zVc7rs8EiLmlDAYpgaIItjnHtsCkvyVVub+I0/sSb3Q=</string>
     <key>SUEnableAutomaticChecks</key>     <true/>
