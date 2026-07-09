@@ -34,7 +34,7 @@ The waveform icon shows whether levelling is on. Click it for:
 - **Level Loudness** — turn levelling on/off
 - Live status — the current track's loudness and the adjustment being applied
 - **This track: known / learning…** and a running **N tracks learned** count
-- **Re-level Now** — re-measure the current audio (for sources that don't broadcast track changes, e.g. a browser)
+- **Re-level Now** — force a re-measure of the current audio (browser/YouTube sources auto-relevel on their own; this is the manual override)
 - **Check for Updates…**, **Settings…**, **About**
 
 The current track's title can optionally be shown to the right of the icon (Settings → Menu Bar) — handy as a lightweight now-playing display, so it can stand in for a separate one.
@@ -54,7 +54,7 @@ Auto-updates are handled by Sparkle.
 
 ### Audio capture (required)
 
-Reading the system audio mix goes through macOS's audio-capture privacy gate (its own category, separate from the microphone). You're prompted the first time you turn levelling on; if you miss it, grant it under **System Settings → Privacy & Security**.
+Reading the system audio mix goes through macOS's audio-capture privacy gate (its own category, separate from the microphone). A short welcome panel on first launch explains this. You're prompted the first time you turn levelling on; if you miss it, grant it under **System Settings → Privacy & Security**.
 
 Audio is measured and processed **entirely on-device, in real time**. Ballast never records, stores, or transmits any audio, and has no telemetry. The only thing written to disk is your loudness library (track loudness values + titles) at `~/Library/Application Support/Ballast/library.json`.
 
@@ -89,7 +89,7 @@ Nothing persists in the system — the graph exists only while levelling is on, 
 
 ## Limitations
 
-- Automatic per-track learning and re-levelling cover **Apple Music** and **Spotify** (the sources that broadcast track changes). Other sources — browser/YouTube audio — are levelled live; use **Re-level Now** to re-measure them on demand.
+- Automatic per-track learning and re-levelling cover **Apple Music** and **Spotify** (the sources that broadcast track changes). Other sources — browser/YouTube audio — are levelled live and **auto-relevel** when the content changes to a noticeably different level (a heuristic, since there's no track signal to key off); **Re-level Now** still forces it immediately.
 - The very first play of any track uses the live pass (nothing is known yet); it's learned for every play after.
 
 ---

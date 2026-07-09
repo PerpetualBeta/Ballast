@@ -16,6 +16,7 @@ enum BallastSettings {
         static let maxGain              = "maxGainDB"
         static let showTrackTitle       = "showTrackTitle"
         static let maxTitleLength       = "maxTitleLength"
+        static let onboarded            = "hasCompletedOnboarding"
     }
 
     // MARK: Design bounds & defaults
@@ -79,6 +80,11 @@ enum BallastSettings {
     static var maxTitleLength: Int {
         get { UserDefaults.standard.integer(forKey: Key.maxTitleLength) }
         set { UserDefaults.standard.set(min(max(newValue, maxTitleLengthRange.lowerBound), maxTitleLengthRange.upperBound), forKey: Key.maxTitleLength) }
+    }
+
+    static var hasCompletedOnboarding: Bool {
+        get { UserDefaults.standard.bool(forKey: Key.onboarded) }
+        set { UserDefaults.standard.set(newValue, forKey: Key.onboarded) }
     }
 }
 

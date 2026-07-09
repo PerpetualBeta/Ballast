@@ -61,6 +61,7 @@ final class BallastEngine {
     private var currentTitle: String?
     private var currentArtist: String?
     private var currentTrackStart = 0.0     // epoch seconds
+    private var playerActive = false        // Music/Spotify actively playing
 
     var libraryCount: Int { library.count }
     var currentTrackKnown: Bool { processor.isKnownTrack }
@@ -107,6 +108,7 @@ final class BallastEngine {
             BallastSettings.isEnabled = true
             registerDeviceChangeListener()
             registerTrackChangeObservers()
+            setPlayerActive(false)
             startDebugTimerIfNeeded()
             probeCurrentTrack()
             blLog("engine started — \(statusMessage)")
@@ -131,6 +133,7 @@ final class BallastEngine {
         statusMessage = "Inactive"
         outputDeviceName = nil
         isPlaying = false
+        playerActive = false
         blLog("engine stopped")
         stateDidChange?()
     }
@@ -156,6 +159,14 @@ final class BallastEngine {
     /// One-shot: ask a running Music/Spotify what is playing now and apply that
     /// track's learned level immediately, rather than waiting for the next
     /// track-change notification.
+    /// Track whether Music/Spotify is the active source. The browser/YouTube
+    /// auto-relevel fallback runs only when no such player is driving, so music
+    /// dynamics can never trip it.
+    private func setPlayerActive(_ active: Bool) {
+        playerActive = active
+        processor.autoRelevelEnabled = !active
+    }
+
     private func probeCurrentTrack() {
         NowPlayingProbe.query { [weak self] result in
             guard let self, let result else { return }
@@ -179,6 +190,7 @@ final class BallastEngine {
         }
         startTrack(TrackIdentity(key: key, durationMS: r.durationMS, title: title, artist: artist))
         isPlaying = true
+        setPlayerActive(true)
         blLog("probe: applied current track \(title ?? "?") -> \(key)")
         trackDidChange?()
     }
@@ -225,13 +237,16 @@ final class BallastEngine {
         let playing = state.isEmpty || state.caseInsensitiveCompare("Playing") == .orderedSame
 
         guard playing else {
-            // Paused or stopped: hide the title, but keep the track loaded so
-            // resuming the same track neither re-levels nor re-learns it.
+            // Paused or stopped: hide the title (keep the track loaded so a
+            // resume doesn't re-level/re-learn), and let auto-relevel take over
+            // in case another source is now playing.
+            setPlayerActive(false)
             if isPlaying { isPlaying = false; trackDidChange?() }
             return
         }
 
         guard let id = trackIdentity(note) else { return }
+        setPlayerActive(true)
         if id.key == currentKey {
             // Same track: a duplicate notification, or a resume after pause.
             if !isPlaying { isPlaying = true; trackDidChange?() }

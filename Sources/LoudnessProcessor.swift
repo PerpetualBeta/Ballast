@@ -41,6 +41,10 @@ final class LoudnessProcessor {
     /// Below this the signal is silence — the gain is held (a track's own quiet
     /// passages don't disturb the anchor).
     private static let silenceGateLUFS = -60.0
+    /// Auto-relevel (sources without track metadata): if the source stays
+    /// this far below the anchor for this long, treat it as new content.
+    private static let autoRelevelDropLU = 6.0
+    private static let autoRelevelSeconds = 6.0
     /// Gain glide toward the target. Cutting is fast (protect the ears the
     /// instant a loud passage arrives); boosting — which only happens right
     /// after a track change — is gentler.
@@ -72,6 +76,10 @@ final class LoudnessProcessor {
     private var desiredGainDB: Double = 0
     private var anchorLoudnessLUFS = -120.0   // loudest sustained level this track (live mode)
     private var needsReanchor = true
+    /// Enabled by the engine only for sources that don't broadcast track
+    /// changes (browser/YouTube); off whenever Music/Spotify is driving.
+    var autoRelevelEnabled = false
+    private var belowAnchorSeconds = 0.0
     private var limiterEnv: Double = 1.0
 
     /// Finite ⇒ this is a *known* track: apply one fixed, dynamics-preserving
@@ -154,6 +162,7 @@ final class LoudnessProcessor {
         currentGainDB = 0
         desiredGainDB = 0
         anchorLoudnessLUFS = -120
+        belowAnchorSeconds = 0
         needsReanchor = true
         knownIntegratedLUFS = .nan
         pendingMeterReset = false
@@ -267,8 +276,24 @@ final class LoudnessProcessor {
             if needsReanchor {
                 needsReanchor = false
                 anchorLoudnessLUFS = shortLoudness
+                belowAnchorSeconds = 0
             } else if shortLoudness > anchorLoudnessLUFS {
                 anchorLoudnessLUFS = shortLoudness
+                belowAnchorSeconds = 0
+            } else if autoRelevelEnabled {
+                // No track-change signal (browser/YouTube): if the source sits
+                // well below the anchor for a sustained spell, the content has
+                // changed to something quieter — re-anchor down to it. (Louder
+                // content is already caught by the rising anchor above.)
+                if anchorLoudnessLUFS - shortLoudness > Self.autoRelevelDropLU {
+                    belowAnchorSeconds += dt
+                    if belowAnchorSeconds >= Self.autoRelevelSeconds {
+                        anchorLoudnessLUFS = shortLoudness
+                        belowAnchorSeconds = 0
+                    }
+                } else {
+                    belowAnchorSeconds = 0
+                }
             }
             desiredGainDB = (targetLoudnessLUFS - anchorLoudnessLUFS).clamped(to: -maxGainDB ... maxGainDB)
         }

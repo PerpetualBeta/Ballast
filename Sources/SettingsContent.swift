@@ -129,6 +129,26 @@ private struct PermissionSection: View {
                 Text("Ballast needs permission to read the system audio mix so it can measure and level loudness. Audio is processed on-device in real time and never recorded.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                let auto = AutomationPermission.combined
+                LabeledContent("Music & Spotify") {
+                    switch auto {
+                    case .authorized:   Text("Granted").foregroundStyle(.green)
+                    case .denied:       Text("Denied").foregroundStyle(.red)
+                    case .notRunning:   Text("\u{2014}").foregroundStyle(.secondary)
+                    case .undetermined: Text("Not requested").foregroundStyle(.secondary)
+                    }
+                }
+                if auto == .denied {
+                    Button("Open System Settings\u{2026}") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
+                Text("Optional. Lets Ballast apply the currently-playing track's level the instant you switch levelling on, by reading what Music or Spotify is playing. Without it, it waits for the next track change.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

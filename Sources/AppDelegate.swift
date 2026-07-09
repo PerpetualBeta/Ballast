@@ -38,6 +38,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if BallastSettings.isEnabled {
             engine.start()
             updateIcon()
+        } else {
+            // First launch (or never enabled): show the one-time welcome panel.
+            BallastOnboarding.showIfNeeded { [weak self] in
+                self?.engine.start()
+                self?.updateIcon()
+            }
         }
 
         // Redraw the status icon when the display configuration changes — the
