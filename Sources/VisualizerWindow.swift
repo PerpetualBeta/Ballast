@@ -140,16 +140,15 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
         container = box
 
         let model = NowPlayingModel()
+        model.engine = engine
         nowPlayingModel = model
-        if let engine {
-            let host = MenuHostingView(rootView: NowPlayingView(engine: engine, model: model))
-            host.frame = box.bounds
-            host.autoresizingMask = [.width, .height]
-            host.isHidden = true
-            host.appearance = NSAppearance(named: .darkAqua)
-            box.addSubview(host)
-            nowPlayingHost = host
-        }
+        let host = MenuHostingView(rootView: NowPlayingView(model: model))
+        host.frame = box.bounds
+        host.autoresizingMask = [.width, .height]
+        host.isHidden = true
+        host.appearance = NSAppearance(named: .darkAqua)
+        box.addSubview(host)
+        nowPlayingHost = host
 
         // A titled window with its title bar + traffic lights hidden and content
         // extended full-size: looks chromeless, but macOS supplies its own

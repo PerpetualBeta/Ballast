@@ -65,6 +65,14 @@ final class BallastEngine {
 
     var libraryCount: Int { library.count }
     var currentTrackKnown: Bool { processor.isKnownTrack }
+    var currentTrackPlays: Int {
+        guard let key = currentKey else { return 0 }
+        return library.plays(key: key, durationMS: currentDurationMS)
+    }
+    var currentTrackLove: Double? {
+        guard let key = currentKey else { return nil }
+        return library.lovePercentile(key: key, durationMS: currentDurationMS)
+    }
     private(set) var isPlaying = false
     var currentTrackTitle: String? { currentTitle }
 

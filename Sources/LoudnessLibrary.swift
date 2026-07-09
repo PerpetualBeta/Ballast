@@ -71,6 +71,25 @@ final class LoudnessLibrary {
         scheduleSave()
     }
 
+    /// Play count for a known track (0 if not learned yet).
+    func plays(key: String, durationMS: Int) -> Int {
+        lookup(key: key, durationMS: durationMS)?.plays ?? 0
+    }
+
+    /// 0...1 percentile rank of this track's play count among all learned
+    /// tracks — how "loved" it is versus the rest of the library. nil if the
+    /// track isn't known yet.
+    func lovePercentile(key: String, durationMS: Int) -> Double? {
+        guard let entry = lookup(key: key, durationMS: durationMS) else { return nil }
+        let total = entries.count
+        guard total > 1 else { return 1 }
+        var less = 0, equal = 0
+        for e in entries.values {
+            if e.plays < entry.plays { less += 1 } else if e.plays == entry.plays { equal += 1 }
+        }
+        return (Double(less) + Double(equal) * 0.5) / Double(total)
+    }
+
     // MARK: Persistence
 
     private func load() {
