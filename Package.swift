@@ -17,6 +17,9 @@ let package = Package(
                 .unsafeFlags(["-framework", "AppKit"]),
                 .unsafeFlags(["-framework", "ServiceManagement"]),
                 .unsafeFlags(["-framework", "CoreAudio"]),
+                .unsafeFlags(["-framework", "Metal"]),
+                .unsafeFlags(["-framework", "MetalKit"]),
+                .unsafeFlags(["-framework", "Accelerate"]),
             ]
         )
     ]

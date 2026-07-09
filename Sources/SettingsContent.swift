@@ -12,6 +12,9 @@ struct BallastSettingsContent: View {
     @State private var maxGain: Double
     @State private var showTitle: Bool
     @State private var maxTitleLen: Int
+    @State private var vizMode: String
+    @State private var vizOnTop: Bool
+    @State private var vizColour: String
 
     init(delegate: AppDelegate) {
         self.delegate = delegate
@@ -20,6 +23,9 @@ struct BallastSettingsContent: View {
         _maxGain = State(initialValue: BallastSettings.maxGain)
         _showTitle = State(initialValue: BallastSettings.showTrackTitle)
         _maxTitleLen = State(initialValue: BallastSettings.maxTitleLength)
+        _vizMode = State(initialValue: BallastSettings.visualizerMode)
+        _vizOnTop = State(initialValue: BallastSettings.visualizerKeepOnTop)
+        _vizColour = State(initialValue: BallastSettings.visualizerColourSource)
     }
 
     var body: some View {
@@ -89,6 +95,32 @@ struct BallastSettingsContent: View {
                 Text("Titles longer than this are trimmed at a word boundary and end with an ellipsis. Nothing is shown while playback is paused or stopped.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+        }
+
+        Section("Visualiser") {
+            Picker("Style", selection: $vizMode) {
+                ForEach(VisualizerMode.allCases, id: \.self) { m in
+                    Text(m.displayName).tag(m.rawValue)
+                }
+            }
+            .onChange(of: vizMode) { _, v in
+                BallastSettings.visualizerMode = v; delegate.visualizer.applySettings()
+            }
+            Toggle("Keep window on top", isOn: $vizOnTop)
+                .onChange(of: vizOnTop) { _, v in
+                    BallastSettings.visualizerKeepOnTop = v; delegate.visualizer.applySettings()
+                }
+            Picker("Colour", selection: $vizColour) {
+                ForEach(VisualizerColourSource.allCases, id: \.self) { c in
+                    Text(c.displayName).tag(c.rawValue)
+                }
+            }
+            .onChange(of: vizColour) { _, v in
+                BallastSettings.visualizerColourSource = v; delegate.visualizer.applySettings()
+            }
+            Button("Open Visualiser\u{2026}") { delegate.visualizer.show() }
+            Text("A real-time visualiser of whatever's playing, in a chromeless resizable window. Right-click it to switch styles, keep it on top, or go full-screen; the arrow keys cycle styles.")
+                .font(.caption).foregroundStyle(.secondary)
         }
 
         // Standard Jorvik menu-bar sections.

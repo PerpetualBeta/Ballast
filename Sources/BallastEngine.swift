@@ -450,6 +450,7 @@ final class BallastEngine {
 
         // 5. Output IOProc on the real device: ring → DSP → speakers.
         let procCtx = Unmanaged.passUnretained(processor).toOpaque()
+        let feedCtx = Unmanaged.passUnretained(VisualizerFeed.shared).toOpaque()
         let outputBlock: AudioDeviceIOBlock = { _, _, _, outOutputData, _ in
             let ring = Unmanaged<AudioRingBuffer>.fromOpaque(ringCtx).takeUnretainedValue()
             let proc = Unmanaged<LoudnessProcessor>.fromOpaque(procCtx).takeUnretainedValue()
@@ -460,6 +461,7 @@ final class BallastEngine {
                 memset(outScratch + got * ch, 0, (frames - got) * ch * MemoryLayout<Float>.size)
             }
             proc.processInterleaved(outScratch, frames: frames)
+            Unmanaged<VisualizerFeed>.fromOpaque(feedCtx).takeUnretainedValue().push(interleaved: outScratch, frames: frames, channels: ch)
             AudioBufferSupport.deinterleave(outScratch, frames: frames, channels: ch, into: outOutputData)
             _ = ring.dbgReadCallbacks.wrappingAdd(1, ordering: .relaxed)
         }

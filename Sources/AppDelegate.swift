@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var liveStatusItem: NSMenuItem?
     private var menuRefreshTimer: Timer?
     let engine = BallastEngine()
+    let visualizer = VisualizerController()
     let sparkleUserDriverDelegate = BallastUserDriverDelegate()
     lazy var sparkleUpdater = SPUStandardUpdaterController(
         startingUpdater: true,
@@ -177,6 +178,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 action: #selector(relevelNow),
                 target: self
             ))
+            actions.append(JorvikMenuBuilder.ActionItem(
+                title: "Visualiser\u{2026}",
+                action: #selector(openVisualizer),
+                target: self
+            ))
         }
 
         actions.append(JorvikMenuBuilder.ActionItem(title: "-", action: #selector(noop), target: self))
@@ -260,6 +266,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func relevelNow() {
         engine.relevelNow()
+    }
+
+    @objc private func openVisualizer() {
+        visualizer.toggle()
     }
 
     @objc private func noop() {}

@@ -35,6 +35,7 @@ The waveform icon shows whether levelling is on. Click it for:
 - Live status — the current track's loudness and the adjustment being applied
 - **This track: known / learning…** and a running **N tracks learned** count
 - **Re-level Now** — force a re-measure of the current audio (browser/YouTube sources auto-relevel on their own; this is the manual override)
+- **Visualiser…** — open the real-time music visualiser
 - **Check for Updates…**, **Settings…**, **About**
 
 The current track's title can optionally be shown to the right of the icon (Settings → Menu Bar) — handy as a lightweight now-playing display, so it can stand in for a separate one.
@@ -44,11 +45,27 @@ The current track's title can optionally be shown to the right of the icon (Sett
 - **Comfort level** — a simple *Quieter ←→ Louder* slider (the loudness target; −16 LUFS by default)
 - **Maximum adjustment** — caps how far Ballast will push any track (±12 dB by default)
 - **Now** — live output device, this track's loudness, and the current adjustment
+- **Visualiser** — choose the style, optionally tint it from your desktop wallpaper (Match or Complement), and keep the window on top
 - **Show current track title** — display the playing track's title to the right of the menu-bar icon, with an adjustable maximum length; longer titles are trimmed at a word boundary with an ellipsis (UTF-8 safe), and nothing is shown while paused or stopped. Off by default.
 - **Permission** — audio-capture status, with a button to grant it or open System Settings
 - **Show icon in menu bar** (macOS 14–15 only), optional **background pill**, and **Launch at Login**
 
 Auto-updates are handled by Sparkle.
+
+## Visualiser
+
+A real-time visualiser of whatever's playing. Because it's driven by the same system-audio tap, it reacts to **any** app — Music, Spotify, a browser, a game. Open it from the menu (**Visualiser…**) or **Settings → Visualiser**.
+
+It's a chromeless, resizable window with the system's standard rounded corners: drag anywhere to move it, right-click for the menu, press the arrow keys to cycle styles, or **f** for full screen. It only renders while open, so there's no cost when it's closed.
+
+Four styles:
+
+- **Aurora** — a calm, generative aurora that drifts and swells with the music.
+- **Spectrum** — an LED-style analyser with slow-falling peak-hold caps.
+- **Oscilloscope** — smooth waveform traces, stacked by frequency band.
+- **VU Meters** — a pair of analogue VU meters with ballistic needles and a real numbered dB scale.
+
+The three generative styles are drawn as procedural Metal shaders (no image assets); the VU meters are vector-drawn with Core Graphics. **Colour** (Settings → Visualiser) can follow your desktop wallpaper — *Match* its dominant tone or take its *Complement* — re-deriving when you change wallpaper or Space. **Keep window on top** floats it above other windows.
 
 ## Permissions
 

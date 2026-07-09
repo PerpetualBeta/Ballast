@@ -17,6 +17,9 @@ enum BallastSettings {
         static let showTrackTitle       = "showTrackTitle"
         static let maxTitleLength       = "maxTitleLength"
         static let onboarded            = "hasCompletedOnboarding"
+        static let visualizerMode       = "visualizerMode"
+        static let visualizerKeepOnTop  = "visualizerKeepOnTop"
+        static let visualizerColour     = "visualizerColourSource"
     }
 
     // MARK: Design bounds & defaults
@@ -85,6 +88,21 @@ enum BallastSettings {
     static var hasCompletedOnboarding: Bool {
         get { UserDefaults.standard.bool(forKey: Key.onboarded) }
         set { UserDefaults.standard.set(newValue, forKey: Key.onboarded) }
+    }
+
+    static var visualizerMode: String {
+        get { UserDefaults.standard.string(forKey: Key.visualizerMode) ?? "aurora" }
+        set { UserDefaults.standard.set(newValue, forKey: Key.visualizerMode) }
+    }
+
+    static var visualizerKeepOnTop: Bool {
+        get { UserDefaults.standard.bool(forKey: Key.visualizerKeepOnTop) }
+        set { UserDefaults.standard.set(newValue, forKey: Key.visualizerKeepOnTop) }
+    }
+
+    static var visualizerColourSource: String {
+        get { UserDefaults.standard.string(forKey: Key.visualizerColour) ?? "builtin" }
+        set { UserDefaults.standard.set(newValue, forKey: Key.visualizerColour) }
     }
 }
 
