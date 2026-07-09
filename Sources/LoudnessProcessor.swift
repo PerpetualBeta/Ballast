@@ -19,7 +19,8 @@ import Foundation
 ///      steady, and quiet passages simply play quieter.
 ///   3. A **track change** (or "Re-level now", or switching on) resets the
 ///      anchor so the next track gets its own gain.
-///   4. A short look-ahead brickwall limiter guards the −1 dBFS ceiling.
+///   4. A short look-ahead limiter guards the −1 dBFS ceiling, using 4x
+///      oversampling to catch inter-sample (true) peaks, not just sample peaks.
 ///
 /// Everything the IO thread touches is pre-allocated. No allocation, locks, or
 /// blocking runtime calls happen in `processInterleaved`.
@@ -29,6 +30,10 @@ final class LoudnessProcessor {
 
     private static let maxChannels = 8
     private static let maxLookaheadFrames = 1024   // ≥ 5 ms look-ahead at 192 kHz
+
+    // True-peak limiter: 4x polyphase oversampling detects inter-sample peaks.
+    private static let tpOversample = 4
+    private static let tpTapsPerPhase = 12
 
     /// Smoothing of the loudness estimate. Long enough that a single transient
     /// (a snare hit) doesn't define the anchor, short enough to follow a swell.
@@ -98,6 +103,10 @@ final class LoudnessProcessor {
     private let shortTermMS: UnsafeMutablePointer<Double>   // smoothed K-weighted mean-square per channel
     private let delayLine: UnsafeMutablePointer<Float>      // limiter look-ahead, channel-major
     private var delayPos = 0
+    // True-peak oversampling FIR: coefficients [phase*taps + tap] and a
+    // per-channel shift-register history [channel*taps + tap].
+    private let tpCoeffs: UnsafeMutablePointer<Double>
+    private let tpHist: UnsafeMutablePointer<Float>
 
     init() {
         let ch = Self.maxChannels
@@ -105,13 +114,18 @@ final class LoudnessProcessor {
         s2z1 = .allocate(capacity: ch); s2z2 = .allocate(capacity: ch)
         shortTermMS = .allocate(capacity: ch)
         delayLine = .allocate(capacity: ch * Self.maxLookaheadFrames)
+        tpCoeffs = .allocate(capacity: Self.tpOversample * Self.tpTapsPerPhase)
+        tpHist = .allocate(capacity: ch * Self.tpTapsPerPhase)
         for p in [s1z1, s1z2, s2z1, s2z2, shortTermMS] { p.initialize(repeating: 0, count: ch) }
         delayLine.initialize(repeating: 0, count: ch * Self.maxLookaheadFrames)
+        tpCoeffs.initialize(repeating: 0, count: Self.tpOversample * Self.tpTapsPerPhase)
+        tpHist.initialize(repeating: 0, count: ch * Self.tpTapsPerPhase)
     }
 
     deinit {
         s1z1.deallocate(); s1z2.deallocate(); s2z1.deallocate(); s2z2.deallocate()
         shortTermMS.deallocate(); delayLine.deallocate()
+        tpCoeffs.deallocate(); tpHist.deallocate()
     }
 
     // MARK: Configuration
@@ -125,6 +139,7 @@ final class LoudnessProcessor {
                                      Int((Self.lookaheadSeconds * sampleRate).rounded())))
         limiterReleaseCoef = 1.0 - exp(-1.0 / (Self.limiterReleaseSeconds * sampleRate))
         ceilingLinear = pow(10.0, BallastSettings.peakCeilingDBFS / 20.0)
+        buildTruePeakFilter()
         integratedMeter.configure(sampleRate: sampleRate)
         resetState()
         bypass = !(channelCount >= 1 && channelCount <= Self.maxChannels)
@@ -134,6 +149,7 @@ final class LoudnessProcessor {
         let ch = Self.maxChannels
         for p in [s1z1, s1z2, s2z1, s2z2, shortTermMS] { p.update(repeating: 0, count: ch) }
         delayLine.update(repeating: 0, count: ch * Self.maxLookaheadFrames)
+        tpHist.update(repeating: 0, count: ch * Self.tpTapsPerPhase)
         delayPos = 0
         currentGainDB = 0
         desiredGainDB = 0
@@ -145,6 +161,32 @@ final class LoudnessProcessor {
         limiterEnv = 1.0
         meterSourceLoudness = -120
         meterGainDB = 0
+    }
+
+    /// Build the 4x polyphase interpolation FIR (windowed sinc) used to detect
+    /// inter-sample (true) peaks. Derived rather than hardcoded; it is a
+    /// fractional interpolator and is independent of the sample rate.
+    private func buildTruePeakFilter() {
+        let l = Self.tpOversample, m = Self.tpTapsPerPhase
+        let n = l * m
+        let centre = Double(n - 1) / 2.0
+        var proto = [Double](repeating: 0, count: n)
+        for i in 0..<n {
+            let x = Double(i) - centre
+            let arg = Double.pi * x / Double(l)
+            let sinc = abs(x) < 1e-9 ? 1.0 : sin(arg) / arg
+            let w = 0.42 - 0.5 * cos(2 * Double.pi * Double(i) / Double(n - 1))
+                         + 0.08 * cos(4 * Double.pi * Double(i) / Double(n - 1))
+            proto[i] = sinc * w
+        }
+        // Polyphase split; normalise each phase to unity DC gain so the
+        // interpolated sub-samples preserve level.
+        for phase in 0..<l {
+            var sum = 0.0
+            for k in 0..<m { sum += proto[k * l + phase] }
+            let norm = sum != 0 ? sum : 1
+            for k in 0..<m { tpCoeffs[phase * m + k] = proto[k * l + phase] / norm }
+        }
     }
 
     func apply(targetLoudness: Double, maxGain: Double) {
@@ -239,8 +281,10 @@ final class LoudnessProcessor {
         let linearGain = pow(10.0, currentGainDB / 20.0)
         meterGainDB = Float(currentGainDB)
 
-        // ── Pass B: apply gain, then the look-ahead limiter (stereo-linked). ──
+        // ── Pass B: apply gain, then the true-peak look-ahead limiter. ──
         let lookahead = lookaheadFrames
+        let tpN = Self.tpTapsPerPhase
+        let tpL = Self.tpOversample
         var pos = delayPos
         var env = limiterEnv
         let ceiling = ceilingLinear
@@ -252,7 +296,25 @@ final class LoudnessProcessor {
             for c in 0..<ch {
                 let g = Double(buf[f * ch + c]) * linearGain
                 delayLine[c * Self.maxLookaheadFrames + pos] = Float(g)
-                let a = abs(g); if a > peak { peak = a }
+
+                // Shift this channel's true-peak history and append the sample.
+                let hb = c * tpN
+                var k = 0
+                while k < tpN - 1 { tpHist[hb + k] = tpHist[hb + k + 1]; k += 1 }
+                tpHist[hb + tpN - 1] = Float(g)
+
+                // True peak = max magnitude over the sample and its interpolated
+                // inter-sample points, so the ceiling holds against overshoot the
+                // DAC would reconstruct between samples.
+                var chPeak = abs(g)
+                for phase in 0..<tpL {
+                    var acc = 0.0
+                    let cb = phase * tpN
+                    var t = 0
+                    while t < tpN { acc += tpCoeffs[cb + t] * Double(tpHist[hb + tpN - 1 - t]); t += 1 }
+                    let a = abs(acc); if a > chPeak { chPeak = a }
+                }
+                if chPeak > peak { peak = chPeak }
             }
             let required = peak > ceiling ? ceiling / peak : 1.0
             if required < env { env = required } else { env += (1.0 - env) * releaseCoef }

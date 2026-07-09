@@ -53,7 +53,7 @@
   <text x="230" y="437" text-anchor="middle" class="h">Loudness engine</text>
   <text x="230" y="455" text-anchor="middle" class="b">measures loudness (EBU R128) and</text>
   <text x="230" y="470" text-anchor="middle" class="b">levels each track; guards the peak ceiling</text>
-  <text x="230" y="485" text-anchor="middle" class="t">K-weighting, look-ahead limiter</text>
+  <text x="230" y="485" text-anchor="middle" class="t">K-weighting, true-peak limiter</text>
 
   <!-- Loudness library (store) -->
   <rect x="382" y="412" width="196" height="80" rx="11" class="box"/>

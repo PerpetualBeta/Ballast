@@ -78,7 +78,7 @@ Driver-free, two real-time callbacks sharing one hardware clock:
 
 - A **global process tap** (`AudioHardwareCreateProcessTap`, `.mutedWhenTapped`, excluding Ballast itself) captures the system mix and mutes its direct path, so you hear only the processed version.
 - A **private aggregate device** clocked by the real output device carries the tap; an input IOProc drains it into a lock-free ring, and an output IOProc on the real device applies the DSP and plays it. Both callbacks run on the same clock, so the ring only absorbs their phase offset.
-- The **DSP** K-weights the signal (BS.1770, coefficients derived per sample-rate), runs a gated **integrated-loudness meter** to learn the whole-track value, and applies either the learned fixed gain (known track) or a live loud-anchored gain (new track), followed by a −1 dBFS look-ahead limiter.
+- The **DSP** K-weights the signal (BS.1770, coefficients derived per sample-rate), runs a gated **integrated-loudness meter** to learn the whole-track value, and applies either the learned fixed gain (known track) or a live loud-anchored gain (new track), followed by a true-peak look-ahead limiter that 4x-oversamples each channel to hold inter-sample peaks under −1 dBFS (not just sample peaks).
 - **Track changes** come from the public `com.apple.Music.playerInfo` / `com.spotify.client.PlaybackStateChanged` distributed notifications — reliable across gapless playback, and immune to a track's own silent passages. (The general MediaRemote framework is entitlement-gated for third-party apps since macOS 15.4, so Ballast doesn't rely on it.)
 
 Nothing persists in the system — the graph exists only while levelling is on, and quitting removes it entirely.
