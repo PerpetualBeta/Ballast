@@ -2,7 +2,7 @@ import MetalKit
 import Accelerate
 
 enum VisualizerMode: String, CaseIterable {
-    case aurora, spectrum, oscilloscope, vu
+    case aurora, spectrum, oscilloscope, vu, nowplaying
 
     var displayName: String {
         switch self {
@@ -10,6 +10,14 @@ enum VisualizerMode: String, CaseIterable {
         case .spectrum:     return "Spectrum"
         case .oscilloscope: return "Oscilloscope"
         case .vu:           return "VU Meters"
+        case .nowplaying:   return "Now Playing"
+        }
+    }
+    /// Shader modes render in the MTKView; vu / nowplaying are AppKit/SwiftUI views.
+    var isShader: Bool {
+        switch self {
+        case .aurora, .spectrum, .oscilloscope: return true
+        case .vu, .nowplaying:                  return false
         }
     }
     var fragmentFunction: String {
@@ -17,7 +25,7 @@ enum VisualizerMode: String, CaseIterable {
         case .aurora:       return "viz_aurora"
         case .spectrum:     return "viz_spectrum"
         case .oscilloscope: return "viz_scope"
-        case .vu:           return "viz_vu"
+        case .vu, .nowplaying: return ""
         }
     }
 }
@@ -90,7 +98,7 @@ final class VisualizerRenderer: NSObject, MTKViewDelegate {
         do {
             let library = try dev.makeLibrary(source: VisualizerShaders.source, options: nil)
             let vfn = library.makeFunction(name: "viz_vertex")
-            for m in VisualizerMode.allCases {
+            for m in VisualizerMode.allCases where m.isShader {
                 let desc = MTLRenderPipelineDescriptor()
                 desc.vertexFunction = vfn
                 desc.fragmentFunction = library.makeFunction(name: m.fragmentFunction)

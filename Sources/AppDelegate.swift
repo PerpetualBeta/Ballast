@@ -7,8 +7,6 @@ import Sparkle
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var statusItem: NSStatusItem?
-    private var liveStatusItem: NSMenuItem?
-    private var menuRefreshTimer: Timer?
     let engine = BallastEngine()
     let visualizer = VisualizerController()
     let sparkleUserDriverDelegate = BallastUserDriverDelegate()
@@ -28,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // after the asynchronous audio-capture permission grant.
         engine.stateDidChange = { [weak self] in self?.updateIcon() }
         engine.trackDidChange = { [weak self] in self?.updateStatusTitle() }
+        visualizer.engine = engine
 
         createStatusItem()
         _ = sparkleUpdater  // forces lazy init so Sparkle starts at launch
@@ -161,18 +160,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             state: engine.isActive ? .on : .off
         ))
 
-        // Live status line (informational, non-clickable) — refreshed while the
-        // menu is open by menuWillOpen's timer.
-        actions.append(infoItem(liveStatusText()))
-
-        if engine.isActive, let device = engine.currentOutputDeviceName {
-            actions.append(infoItem("Output: \(device)"))
-        }
-        actions.append(infoItem(String(format: "Target: %.0f LUFS", BallastSettings.targetLoudness)))
-
+        // Live level stats now live in the visualiser's Now Playing mode (and
+        // Settings → Now), so the menu stays controls-only.
         if engine.isActive {
-            actions.append(infoItem(engine.currentTrackKnown ? "This track: known — fixed level" : "This track: learning\u{2026}"))
-            actions.append(infoItem("\(engine.libraryCount) tracks learned"))
             actions.append(JorvikMenuBuilder.ActionItem(
                 title: "Re-level Now",
                 action: #selector(relevelNow),
@@ -206,52 +196,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item)
         }
 
-        // The live Source/Gain line is the item just after the toggle.
-        liveStatusItem = menu.items.firstIndex(where: { $0.title == "Level Loudness" })
-            .flatMap { $0 + 1 < menu.items.count ? menu.items[$0 + 1] : nil }
     }
 
-    // MARK: - Live status line (updates while the menu is open)
-
-    func menuWillOpen(_ menu: NSMenu) {
-        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-            self?.refreshLiveStatus()
-        }
-        // .common so it fires during menu event-tracking, not just the default mode.
-        RunLoop.main.add(timer, forMode: .common)
-        menuRefreshTimer = timer
-    }
-
-    func menuDidClose(_ menu: NSMenu) {
-        menuRefreshTimer?.invalidate()
-        menuRefreshTimer = nil
-    }
-
-    private func refreshLiveStatus() {
-        liveStatusItem?.attributedTitle = infoAttr(liveStatusText())
-    }
-
-    private func liveStatusText() -> String {
-        guard engine.isActive else { return engine.statusMessage }
-        let src = engine.processor.meterSourceLoudness
-        let gain = engine.processor.meterGainDB
-        let srcText = src <= -100 ? "\u{2014}" : String(format: "%.1f LUFS", src)
-        return String(format: "Source %@ · Gain %+.1f dB", srcText, gain)
-    }
-
-    private func infoItem(_ text: String) -> JorvikMenuBuilder.ActionItem {
-        JorvikMenuBuilder.ActionItem(
-            title: text, action: #selector(noop), target: self,
-            isEnabled: false, attributedTitle: infoAttr(text)
-        )
-    }
-
-    private func infoAttr(_ text: String) -> NSAttributedString {
-        NSAttributedString(string: text, attributes: [
-            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
-            .foregroundColor: NSColor.secondaryLabelColor,
-        ])
-    }
 
     // MARK: - Actions
 

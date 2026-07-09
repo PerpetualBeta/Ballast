@@ -32,11 +32,11 @@ When you switch output device — headphones, a speaker — Ballast rebuilds its
 The waveform icon shows whether levelling is on. Click it for:
 
 - **Level Loudness** — turn levelling on/off
-- Live status — the current track's loudness and the adjustment being applied
-- **This track: known / learning…** and a running **N tracks learned** count
 - **Re-level Now** — force a re-measure of the current audio (browser/YouTube sources auto-relevel on their own; this is the manual override)
 - **Visualiser…** — open the real-time music visualiser
 - **Check for Updates…**, **Settings…**, **About**
+
+The live level readout (source loudness, adjustment, target, learned count) lives in the visualiser's **Now Playing** mode and **Settings → Now**, keeping the menu to controls only.
 
 The current track's title can optionally be shown to the right of the icon (Settings → Menu Bar) — handy as a lightweight now-playing display, so it can stand in for a separate one.
 
@@ -58,14 +58,15 @@ A real-time visualiser of whatever's playing. Because it's driven by the same sy
 
 It's a chromeless, resizable window with the system's standard rounded corners: drag anywhere to move it, right-click for the menu, press the arrow keys to cycle styles, or **f** for full screen. It only renders while open, so there's no cost when it's closed.
 
-Four styles:
+Five styles:
 
 - **Aurora** — a calm, generative aurora that drifts and swells with the music.
 - **Spectrum** — an LED-style analyser with slow-falling peak-hold caps.
 - **Oscilloscope** — smooth waveform traces, stacked by frequency band.
 - **VU Meters** — a pair of analogue VU meters with ballistic needles and a real numbered dB scale.
+- **Now Playing** — the album artwork as a backdrop, with the track details and Ballast's live level readout (source loudness, adjustment, target, known/learning, learned count) — a home for those stats outside the menu bar.
 
-The three generative styles are drawn as procedural Metal shaders (no image assets); the VU meters are vector-drawn with Core Graphics. **Colour** (Settings → Visualiser) can follow your desktop wallpaper — *Match* its dominant tone or take its *Complement* — re-deriving when you change wallpaper or Space. **Keep window on top** floats it above other windows.
+The three generative styles are procedural Metal shaders (no image assets); the VU meters are vector-drawn with Core Graphics and Now Playing is a SwiftUI view. **Colour** (Settings → Visualiser) can follow your desktop wallpaper — *Match* its dominant tone or take its *Complement* — re-deriving when you change wallpaper or Space. **Keep window on top** floats it above other windows.
 
 ## Permissions
 

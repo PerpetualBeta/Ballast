@@ -1,10 +1,23 @@
 import AppKit
 import MetalKit
+import SwiftUI
 
-/// Borderless panel that can still take key events (for keyboard mode control).
+/// Titled/hidden-chrome panel that can take key events, forwarding unhandled
+/// keys to the controller (e.g. while the SwiftUI Now Playing view is first
+/// responder).
 final class VisualizerPanel: NSWindow {
+    weak var controller: VisualizerController?
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+    override func keyDown(with event: NSEvent) {
+        switch event.keyCode {
+        case 123: controller?.cycleMode(-1)
+        case 124: controller?.cycleMode(1)
+        case 53:  controller?.hide()
+        case 3:   controller?.toggleFullScreen()
+        default:  super.keyDown(with: event)
+        }
+    }
 }
 
 /// MTKView that forwards keyboard + right-click to the controller.
@@ -22,6 +35,15 @@ final class VisualizerMetalView: MTKView {
     }
 }
 
+/// NSHostingView that forwards right-clicks to its NSMenu — SwiftUI otherwise
+/// swallows them, which loses the context menu in Now Playing mode.
+final class MenuHostingView<Content: View>: NSHostingView<Content> {
+    override func rightMouseDown(with event: NSEvent) {
+        guard let menu else { return super.rightMouseDown(with: event) }
+        menu.popUp(positioning: nil, at: convert(event.locationInWindow, from: nil), in: self)
+    }
+}
+
 /// Owns the chromeless, resizable, drag-anywhere visualiser window and its
 /// Metal renderer. The audio feed only runs while this window is visible.
 @MainActor
@@ -31,7 +53,10 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
     private var renderer: VisualizerRenderer?
     private var metalView: VisualizerMetalView?
     private var vuView: VUMeterView?
+    private var nowPlayingHost: NSView?
+    private var nowPlayingModel: NowPlayingModel?
     private var container: NSView?
+    weak var engine: BallastEngine?
     private var flashLabel: NSTextField?
     private var savedFrame: NSRect?
     private var isFullScreen = false
@@ -56,6 +81,7 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
     func hide() {
         VisualizerFeed.shared.active.store(false, ordering: .relaxed)
         vuView?.stop()
+        nowPlayingModel?.stop()
         window?.orderOut(nil)
     }
 
@@ -68,11 +94,15 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
     }
 
     private func updateModeVisibility() {
-        let isVU = (renderer?.mode == .vu)
-        vuView?.isHidden = !isVU
-        metalView?.isHidden = isVU
-        if isVU { vuView?.start() } else { vuView?.stop() }
-        window?.makeFirstResponder(isVU ? vuView : metalView)
+        let mode = renderer?.mode ?? .aurora
+        metalView?.isHidden = !mode.isShader
+        vuView?.isHidden = mode != .vu
+        nowPlayingHost?.isHidden = mode != .nowplaying
+        if mode == .vu { vuView?.start() } else { vuView?.stop() }
+        if mode == .nowplaying { nowPlayingModel?.start() } else { nowPlayingModel?.stop() }
+        let responder: NSResponder? = mode == .vu ? vuView
+            : (mode == .nowplaying ? nowPlayingHost : metalView)
+        window?.makeFirstResponder(responder)
     }
 
     func refreshPalette() {
@@ -109,6 +139,18 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
         vuView = vu
         container = box
 
+        let model = NowPlayingModel()
+        nowPlayingModel = model
+        if let engine {
+            let host = MenuHostingView(rootView: NowPlayingView(engine: engine, model: model))
+            host.frame = box.bounds
+            host.autoresizingMask = [.width, .height]
+            host.isHidden = true
+            host.appearance = NSAppearance(named: .darkAqua)
+            box.addSubview(host)
+            nowPlayingHost = host
+        }
+
         // A titled window with its title bar + traffic lights hidden and content
         // extended full-size: looks chromeless, but macOS supplies its own
         // standard window corner radius (uniform across the OS, incl. Golden Gate)
@@ -127,6 +169,7 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
         w.backgroundColor = .black
         w.collectionBehavior = [.fullScreenNone]
         w.delegate = self
+        w.controller = self
         w.setFrameAutosaveName("BallastVisualizerWindow")
         if !w.setFrameUsingName("BallastVisualizerWindow") { w.center() }
         window = w
@@ -148,6 +191,7 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
         view.menu = menu
         vu.menu = menu
         vu.controller = self
+        nowPlayingHost?.menu = menu
 
         // Re-derive the wallpaper palette when the desktop (or Space) changes.
         NSWorkspace.shared.notificationCenter.addObserver(

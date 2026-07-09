@@ -64,4 +64,70 @@ enum NowPlayingProbe {
         guard error == nil, let value = output.stringValue, !value.isEmpty else { return nil }
         return value.components(separatedBy: "\u{1F}")
     }
+
+    // MARK: Now-playing info (title / artist / album / artwork) for the visualiser
+
+    struct NowPlayingInfo {
+        let title: String
+        let artist: String
+        let album: String
+        let artwork: NSImage?
+    }
+
+    static func nowPlaying(_ completion: @escaping (NowPlayingInfo?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let info = probeNowPlayingInfo()
+            DispatchQueue.main.async { completion(info) }
+        }
+    }
+
+    private static func probeNowPlayingInfo() -> NowPlayingInfo? {
+        if isRunning("com.apple.Music"), let i = musicNowPlaying() { return i }
+        if isRunning("com.spotify.client"), let i = spotifyNowPlaying() { return i }
+        return nil
+    }
+
+    private static func musicNowPlaying() -> NowPlayingInfo? {
+        let script = """
+        tell application "Music"
+            if player state is playing then
+                set sep to character id 31
+                set t to current track
+                return (name of t) & sep & (artist of t) & sep & (album of t)
+            end if
+            return ""
+        end tell
+        """
+        guard let f = run(script), f.count == 3 else { return nil }
+        return NowPlayingInfo(title: f[0], artist: f[1], album: f[2], artwork: musicArtwork())
+    }
+
+    private static func musicArtwork() -> NSImage? {
+        let src = """
+        tell application "Music" to get data of artwork 1 of current track
+        """
+        guard let script = NSAppleScript(source: src) else { return nil }
+        var error: NSDictionary?
+        let out = script.executeAndReturnError(&error)
+        guard error == nil else { return nil }
+        let data = out.data
+        return data.isEmpty ? nil : NSImage(data: data)
+    }
+
+    private static func spotifyNowPlaying() -> NowPlayingInfo? {
+        let script = """
+        tell application "Spotify"
+            if player state is playing then
+                set sep to character id 31
+                set t to current track
+                return (name of t) & sep & (artist of t) & sep & (album of t) & sep & (artwork url of t)
+            end if
+            return ""
+        end tell
+        """
+        guard let f = run(script), f.count == 4 else { return nil }
+        var art: NSImage?
+        if let url = URL(string: f[3]), let d = try? Data(contentsOf: url) { art = NSImage(data: d) }
+        return NowPlayingInfo(title: f[0], artist: f[1], album: f[2], artwork: art)
+    }
 }
