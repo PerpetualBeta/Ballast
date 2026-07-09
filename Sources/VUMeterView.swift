@@ -1,6 +1,6 @@
 import AppKit
 
-/// A Core Graphics VU meter pair — real typography (numbered dB scale + "VU"),
+/// A Core Graphics VU meter pair — real typography (numbered dB scale + L/R),
 /// vector arcs/ticks, a brass bevel and an even backlight. Static artwork is
 /// cached to an image; only the ballistic needles redraw each frame. Shown in
 /// the visualiser's "VU Meters" mode instead of the Metal view.
@@ -118,7 +118,7 @@ final class VUMeterView: NSView {
             let red = NSColor(calibratedRed: 0.80, green: 0.13, blue: 0.07, alpha: 1)
             let ink = NSColor(calibratedWhite: 0.11, alpha: 1)
 
-            for m in meters() {
+            for (i, m) in meters().enumerated() {
                 let mh = m.rect.height
                 let bez = m.rect.insetBy(dx: -m.rect.width * 0.03, dy: -mh * 0.035)
                 NSGradient(colors: [NSColor(calibratedRed: 0.62, green: 0.48, blue: 0.24, alpha: 1),
@@ -147,8 +147,8 @@ final class VUMeterView: NSView {
                     stroke(ctx, from: point(m, a, m.arcR), to: point(m, a, m.arcR + mh * 0.05), width: mh * 0.007, color: col)
                     draw(label, at: point(m, a, m.arcR + mh * 0.105), font: font, color: col)
                 }
-                // "VU" lower-left, modest
-                draw("VU", at: CGPoint(x: m.rect.minX + m.rect.width * 0.15, y: m.rect.minY + mh * 0.16),
+                // Channel label (L / R) lower-left, modest
+                draw(i == 0 ? "L" : "R", at: CGPoint(x: m.rect.minX + m.rect.width * 0.15, y: m.rect.minY + mh * 0.16),
                      font: NSFont.systemFont(ofSize: mh * 0.11, weight: .heavy), color: ink)
                 ctx.restoreGState()
             }

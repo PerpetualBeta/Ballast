@@ -2,7 +2,7 @@ import MetalKit
 import Accelerate
 
 enum VisualizerMode: String, CaseIterable {
-    case aurora, spectrum, oscilloscope, vu, nowplaying
+    case aurora, dancer, spectrum, oscilloscope, vu, nowplaying
 
     var displayName: String {
         switch self {
@@ -11,13 +11,14 @@ enum VisualizerMode: String, CaseIterable {
         case .oscilloscope: return "Oscilloscope"
         case .vu:           return "VU Meters"
         case .nowplaying:   return "Now Playing"
+        case .dancer:       return "Dancer"
         }
     }
     /// Shader modes render in the MTKView; vu / nowplaying are AppKit/SwiftUI views.
     var isShader: Bool {
         switch self {
-        case .aurora, .spectrum, .oscilloscope: return true
-        case .vu, .nowplaying:                  return false
+        case .aurora, .spectrum, .oscilloscope, .dancer: return true
+        case .vu, .nowplaying:                           return false
         }
     }
     var fragmentFunction: String {
@@ -25,6 +26,7 @@ enum VisualizerMode: String, CaseIterable {
         case .aurora:       return "viz_aurora"
         case .spectrum:     return "viz_spectrum"
         case .oscilloscope: return "viz_scope"
+        case .dancer:       return "viz_dancer"
         case .vu, .nowplaying: return ""
         }
     }
@@ -69,6 +71,8 @@ final class VisualizerRenderer: NSObject, MTKViewDelegate {
     private var autoMax: Float = 1e-4
     private var bassAvg: Float = 0
     private var levelSmooth: Float = 0
+    private var beatSmooth: Float = 0
+    private var dancePhase: Float = 0
     // VU needle ballistics (spring-damper): position + velocity per channel.
     private var needlePosL: Float = 0, needleVelL: Float = 0
     private var needlePosR: Float = 0, needleVelR: Float = 0
@@ -86,7 +90,7 @@ final class VisualizerRenderer: NSObject, MTKViewDelegate {
         func buf(_ count: Int) -> MTLBuffer? {
             dev.makeBuffer(length: count * MemoryLayout<Float>.stride, options: .storageModeShared)
         }
-        guard let u = buf(12), let sp = buf(Self.bandCount), let wv = buf(Self.waveCount),
+        guard let u = buf(13), let sp = buf(Self.bandCount), let wv = buf(Self.waveCount),
               let pk = buf(Self.bandCount), let bw = buf(Self.bandWaveCount * Self.waveCount),
               let pl = buf(12)
         else { return nil }
@@ -183,6 +187,13 @@ final class VisualizerRenderer: NSObject, MTKViewDelegate {
         let overall = min(1, (VisualizerFeed.shared.levelL + VisualizerFeed.shared.levelR) * 0.5 * 3)
         levelSmooth += (overall - levelSmooth) * 0.10
 
+        // Smooth "groove" clock for the Dancer: its speed tracks the music's
+        // energy (busier → livelier), but it's an accumulated, low-passed phase
+        // so there's no snap on individual beats.
+        beatSmooth += (beat - beatSmooth) * 0.03
+        let drive = min(Float(1), levelSmooth * 1.3 + beatSmooth * 2.2)
+        dancePhase += (1.0 / 60.0) * (1.0 + drive * 3.0)
+
         // VU needle ballistics — spring toward the target with damping (momentum,
         // ~mechanical rise time, slight overshoot).
         let dt: Float = 1.0 / 60.0, k: Float = 120, c: Float = 16
@@ -214,7 +225,7 @@ final class VisualizerRenderer: NSObject, MTKViewDelegate {
         copy(peaks, to: peakBuf, count: Self.bandCount)
         copy(bandWaves, to: bandWaveBuf, count: Self.bandWaveCount * Self.waveCount)
         let t = Float(CFAbsoluteTimeGetCurrent() - startTime)
-        uniformBuf.contents().withMemoryRebound(to: Float.self, capacity: 12) { p in
+        uniformBuf.contents().withMemoryRebound(to: Float.self, capacity: 13) { p in
             p[0] = t
             p[3] = needlePosL
             p[4] = needlePosR
@@ -223,6 +234,7 @@ final class VisualizerRenderer: NSObject, MTKViewDelegate {
             p[7] = Float(Self.waveCount)
             p[8] = levelSmooth
             p[9] = Float(Self.bandWaveCount)
+            p[12] = dancePhase
             p[10] = 20                              // spectrum: wide LED bars
             p[11] = (colours != nil) ? 1 : 0        // wallpaper tint on/off
         }
@@ -248,7 +260,7 @@ final class VisualizerRenderer: NSObject, MTKViewDelegate {
 
         analyse()
         let size = view.drawableSize
-        uniformBuf.contents().withMemoryRebound(to: Float.self, capacity: 12) { p in
+        uniformBuf.contents().withMemoryRebound(to: Float.self, capacity: 13) { p in
             p[1] = Float(size.width); p[2] = Float(size.height)
         }
 

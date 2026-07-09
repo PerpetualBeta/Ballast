@@ -58,15 +58,16 @@ A real-time visualiser of whatever's playing. Because it's driven by the same sy
 
 It's a chromeless, resizable window with the system's standard rounded corners: drag anywhere to move it, right-click for the menu, press the arrow keys to cycle styles, or **f** for full screen. It only renders while open, so there's no cost when it's closed.
 
-Five styles:
+Six styles:
 
 - **Aurora** — a calm, generative aurora that drifts and swells with the music.
+- **Dancer** — a nightclub floor drawn in pure math: abstract, smoke-like figures sway through a single hard key light, their pace ebbing and flowing with the music's energy, with a mirrored waveform riding over the top.
 - **Spectrum** — an LED-style analyser with slow-falling peak-hold caps.
 - **Oscilloscope** — smooth waveform traces, stacked by frequency band.
 - **VU Meters** — a pair of analogue VU meters with ballistic needles and a real numbered dB scale.
 - **Now Playing** — the album artwork as a backdrop and hero, with the track details, a **“love” rating** (hearts, from how often you play a track versus the rest of your library) and **play count**, plus Ballast's live level readout (source loudness, adjustment, target, known/learning, learned count) — a home for those stats outside the menu bar. When paused it holds the track (dimmed); when nothing's playing it settles into a calm, wallpaper-tinted drifting gradient.
 
-The three generative styles are procedural Metal shaders (no image assets); the VU meters are vector-drawn with Core Graphics and Now Playing is a SwiftUI view. **Colour** (Settings → Visualiser) can follow your desktop wallpaper — *Match* its dominant tone or take its *Complement* — re-deriving when you change wallpaper or Space. **Keep window on top** floats it above other windows.
+The four generative styles are procedural Metal shaders (no image assets); the VU meters are vector-drawn with Core Graphics and Now Playing is a SwiftUI view. **Colour** (Settings → Visualiser) can follow your desktop wallpaper — *Match* its dominant tone or take its *Complement* — re-deriving when you change wallpaper or Space. **Keep window on top** floats it above other windows.
 
 ## Permissions
 
@@ -108,6 +109,7 @@ Nothing persists in the system — the graph exists only while levelling is on, 
 ## Limitations
 
 - Automatic per-track learning and re-levelling cover **Apple Music** and **Spotify** (the sources that broadcast track changes). Other sources — browser/YouTube audio — are levelled live and **auto-relevel** when the content changes to a noticeably different level (a heuristic, since there's no track signal to key off); **Re-level Now** still forces it immediately.
+- **Crossfade works against per-track levelling.** With Apple Music's *Crossfade* on (Settings → Playback → Song Transitions), the end of one track overlaps the start of the next for a few seconds, and Music reports the track change only part-way through that blend. During the overlap Ballast is still applying the *outgoing* track's level to the incoming one — so a quiet track fading into a much louder one can briefly come through above your comfort level, until the change is reported and the new track's own level takes over. Two differently-mastered tracks playing at once have no single correct level, so this is inherent to crossfading rather than something Ballast can fully fix. For levelling that's exact from the first note of every track, turn Crossfade off.
 - The very first play of any track uses the live pass (nothing is known yet); it's learned for every play after.
 
 ---
