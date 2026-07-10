@@ -3,7 +3,7 @@ import Foundation
 /// Metal Shading Language for the visualiser, compiled at runtime.
 /// Uniforms (buffer 0): u[0]=time u[1]=resW u[2]=resH u[3]=needleL u[4]=needleR
 ///   u[5]=beat u[6]=bandCount u[7]=waveCount u[8]=level u[9]=bandWaveCount
-///   u[10]=spectrumBars u[11]=tint(0/1)
+///   u[10]=spectrumBars u[11]=tint(0/1) u[12]=grooveClock (Dancer)
 /// buffer(1)=spectrum, buffer(3)=peaks, buffer(4)=bandWaves,
 /// buffer(5)=palette (3 rgba colours from the wallpaper, when tint=1).
 enum VisualizerShaders {
@@ -242,9 +242,14 @@ enum VisualizerShaders {
             float fb = sx * barCount;
             float barGap = smoothstep(0.0, 0.30, fract(fb)) * smoothstep(1.0, 0.70, fract(fb));
             uint bands = uint(u[6]);
+            // The top ~1/8 of the bands (~7.5–15 kHz) carries almost no musical
+            // energy, so the last few bars mapped there sat permanently dead — the
+            // "inactive bars on the right". Spread all the bars across only the
+            // lower, energy-bearing bands so every bar responds to the music.
+            uint activeBands = (bands * 7u) / 8u;
             uint bar = uint(clamp(fb, 0.0, barCount - 1.0));
-            uint lo = bar * bands / uint(barCount);
-            uint hi = max(lo + 1u, (bar + 1u) * bands / uint(barCount));
+            uint lo = bar * activeBands / uint(barCount);
+            uint hi = max(lo + 1u, (bar + 1u) * activeBands / uint(barCount));
             float mag = 0.0;
             for (uint i = lo; i < hi; i++) mag = max(mag, spec[i]);
             mag = pow(mag, 0.9);
