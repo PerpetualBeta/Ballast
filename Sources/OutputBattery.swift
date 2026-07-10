@@ -14,7 +14,10 @@ enum OutputBattery {
     /// The output device's battery state.
     /// - `unavailable`: a wired/built-in/AirPlay output — no battery to show.
     /// - `unknown`: a wireless (Bluetooth) output that isn't advertising a
-    ///   level right now (headphones do this intermittently) — show "tbc".
+    ///   level right now (headphones do this intermittently). The UI shows no
+    ///   row for this, but it's kept distinct from `unavailable` so the model
+    ///   can retain a last-known level through a momentary drop-out rather than
+    ///   flickering the row away.
     /// - `level`: a wireless output reporting a charge percentage (0–100).
     enum Status: Equatable {
         case unavailable

@@ -421,9 +421,8 @@ struct NowPlayingView: View {
             statRow("Learned", "\(st.learned) tracks", s)
             statRow("Output", st.output, s)
             switch st.battery {
-            case .level(let pct): batteryRow(pct, s)
-            case .unknown:        statRow("Battery", "tbc", s)
-            case .unavailable:    EmptyView()
+            case .level(let pct):        batteryRow(pct, s)   // only when a real level is reported
+            case .unknown, .unavailable: EmptyView()
             }
         }
         .padding(s * 0.036)
