@@ -275,25 +275,28 @@ struct NowPlayingView: View {
         .opacity(paused ? 0.72 : 1)
     }
 
-    /// The metadata + stats column. Wrapped so it scales down to fit the height
-    /// it's given: a Known track (hearts, Length, Battery, full stats) is taller
-    /// than a still-learning one, and because every size is derived from
-    /// `min(width, height)` a bigger window scales the content up too — so
-    /// without this the tall case overflows at every window size.
+    /// The metadata + stats column. The hero title/artist/album always render
+    /// at full size; only the stats panel scales down to fit the height left
+    /// below the header — a Known track (Length, Battery, full stats) is taller
+    /// than a still-learning one, and because every size derives from
+    /// `min(width, height)` a bigger window scales content up too, so the panel
+    /// alone absorbs any overflow rather than shrinking the title with it.
     private func details(_ s: CGFloat, paused: Bool) -> some View {
         GeometryReader { geo in
-            detailsStack(s, paused: paused)
-                .background(GeometryReader { g in
-                    Color.clear.preference(key: DetailsHeightKey.self, value: g.size.height)
-                })
-                .modifier(FitHeight(available: geo.size.height))
-                .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
+            DetailsColumn(
+                available: geo.size.height,
+                spacing: s * 0.026,
+                statsTopPad: s * 0.03,
+                header: { headerBlock(s, paused: paused) },
+                stats: { statsPanel(model.stats, s, includeThisTrack: true) }
+            )
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
+            .opacity(paused ? 0.85 : 1)
         }
     }
 
-    private func detailsStack(_ s: CGFloat, paused: Bool) -> some View {
-        let st = model.stats
-        return VStack(alignment: .leading, spacing: s * 0.026) {
+    @ViewBuilder private func headerBlock(_ s: CGFloat, paused: Bool) -> some View {
+        VStack(alignment: .leading, spacing: s * 0.026) {
             if paused {
                 Text("PAUSED").font(.system(size: s * 0.032, weight: .heavy)).tracking(1.5)
                     .padding(.horizontal, s * 0.03).padding(.vertical, s * 0.012)
@@ -307,10 +310,7 @@ struct NowPlayingView: View {
                 Text(model.album).font(.system(size: s * 0.046))
                     .lineLimit(1).minimumScaleFactor(0.6).foregroundStyle(.white.opacity(0.6))
             }
-            statsPanel(st, s, includeThisTrack: true).padding(.top, s * 0.03)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .opacity(paused ? 0.85 : 1)
     }
 
     @ViewBuilder private func loveLine(_ st: NowPlayingStats, _ s: CGFloat) -> some View {
@@ -443,25 +443,47 @@ struct NowPlayingView: View {
     }
 }
 
-/// Carries a subview's natural (unconstrained) height up to `FitHeight`.
-private struct DetailsHeightKey: PreferenceKey {
+private struct HeaderHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+private struct StatsHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
-/// Uniformly scales its content down (never up) so it fits within `available`
-/// height, then claims only the fitted height so it doesn't push its siblings.
-/// The content still lays out at its natural size — the scale is a visual
-/// transform — so text truncation and internal spacing are unaffected.
-private struct FitHeight: ViewModifier {
+/// Stacks a full-size `header` above a `stats` panel, and scales ONLY the stats
+/// down (never up) so the pair fits within `available` height. The header keeps
+/// its natural size; the stats absorb any overflow. Both heights are measured,
+/// so the stats are given exactly the space left below the header.
+private struct DetailsColumn<Header: View, Stats: View>: View {
     let available: CGFloat
-    @State private var natural: CGFloat = 0
+    let spacing: CGFloat
+    let statsTopPad: CGFloat
+    @ViewBuilder var header: Header
+    @ViewBuilder var stats: Stats
 
-    func body(content: Content) -> some View {
-        let scale = (natural > available && available > 0) ? available / natural : 1
-        return content
-            .onPreferenceChange(DetailsHeightKey.self) { natural = $0 }
-            .scaleEffect(scale, anchor: .topLeading)
-            .frame(height: natural > 0 ? min(natural, available) : nil, alignment: .topLeading)
+    @State private var headerHeight: CGFloat = 0
+    @State private var statsHeight: CGFloat = 0
+
+    var body: some View {
+        let room = max(0, available - headerHeight - statsTopPad)
+        let scale = (statsHeight > room && room > 0) ? room / statsHeight : 1
+        VStack(alignment: .leading, spacing: spacing) {
+            header
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: HeaderHeightKey.self, value: g.size.height)
+                })
+            stats
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: StatsHeightKey.self, value: g.size.height)
+                })
+                .scaleEffect(scale, anchor: .topLeading)
+                .frame(height: statsHeight > 0 ? min(statsHeight, room) : nil, alignment: .topLeading)
+                .padding(.top, statsTopPad)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onPreferenceChange(HeaderHeightKey.self) { headerHeight = $0 }
+        .onPreferenceChange(StatsHeightKey.self) { statsHeight = $0 }
     }
 }
