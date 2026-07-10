@@ -80,14 +80,16 @@ enum VisualizerShaders {
         uint barCount = uint(u[10]);
         float fb = uv.x * float(barCount);
         uint bar = uint(clamp(fb, 0.0, float(barCount) - 1.0));
-        float bgap = smoothstep(0.0, 0.10, fract(fb)) * smoothstep(1.0, 0.90, fract(fb));
         uint bands = uint(u[6]);
-        uint lo = bar * bands / barCount, hi = max(lo + 1, (bar + 1) * bands / barCount);
+        // Spread the LEDs across only the energy-bearing bands (drop the dead top
+        // ~1/8, ~7.5–15 kHz) so the rightmost columns aren't a permanent dead
+        // zone — same correction as the Dancer spectrum.
+        uint activeBands = (bands * 7u) / 8u;
+        uint lo = bar * activeBands / barCount, hi = max(lo + 1, (bar + 1) * activeBands / barCount);
         float mag = 0.0, pk = 0.0;
         for (uint i = lo; i < hi; i++) { mag = max(mag, spec[i]); pk = max(pk, peaks[i]); }
         float segN = 18.0;
         float segIdx = floor(uv.y * segN);
-        float sgap = smoothstep(0.0, 0.16, fract(uv.y * segN)) * smoothstep(1.0, 0.84, fract(uv.y * segN));
         float segLevel = (segIdx + 0.5) / segN;
         bool tint = u[11] > 0.5;
         // The standing bar stays calm (green, or the two low palette tones);
@@ -98,10 +100,37 @@ enum VisualizerShaders {
         float3 body = mix(bodyLo, bodyHi, segLevel);
         float3 cap = tint ? palC(pal, 2)
                           : mix(float3(0.95, 0.62, 0.10), float3(0.96, 0.13, 0.06), smoothstep(0.45, 0.92, pk));
-        float lit = segLevel <= mag ? 1.0 : 0.10;
         bool isPeak = abs(segIdx - floor(pk * segN - 0.001)) < 0.5;
-        float3 col = (isPeak ? cap : body * lit) * bgap * sgap;
-        col += float3(0.015, 0.02, 0.025);
+        bool on = (segLevel <= mag) || isPeak;
+        float3 emit = isPeak ? cap : body;
+
+        // Each segment is drawn as a discrete glassy LED lens in cell-local
+        // coordinates (a rounded lozenge that fills most of its cell; the gaps
+        // between LEDs fall out of the lens not filling the cell). Lit LEDs read
+        // as light emitters: a convex, centre-bright core that goes near-white at
+        // the hottest point, a glassy highlight up top, a coloured bevel, and a
+        // bloom that spills past the lens into the surrounding dark. Unlit LEDs
+        // stay as dim tinted glass so the whole matrix reads even when dark.
+        float2 cell = float2(fract(fb), fract(uv.y * segN)) - 0.5;      // [-0.5, 0.5]
+        float lensD = sdRoundBox(cell, float2(0.42, 0.40), 0.16);
+        float lens  = smoothstep(0.035, -0.04, lensD);                  // soft rounded body
+        float dome  = smoothstep(0.52, 0.0, length(cell));             // convex centre-bright falloff
+        float sheen = smoothstep(0.24, 0.0, length((cell - float2(-0.10, 0.19)) * float2(1.0, 1.25))); // top glass glint
+        float rim   = smoothstep(0.05, 0.0, abs(lensD));               // bevel ring on the lens edge
+
+        float3 col;
+        if (on) {
+            float3 hot = mix(emit, float3(1.0), 0.32 * dome * dome);    // bright emissive core (keeps the LED colour)
+            col  = hot * (0.5 + 0.85 * dome) * lens;                   // domed emitter body
+            col += sheen * lens * 0.5;                                 // glassy top highlight
+            col += emit * rim * 0.5;                                   // coloured bevel bleed
+            col += emit * exp(-dot(cell, cell) * 8.0) * 0.55;          // bloom spilling into the gaps
+        } else {
+            float3 off = body * 0.06;                                  // dark tinted glass
+            col  = off * (0.45 + 0.9 * dome) * lens;
+            col += sheen * lens * 0.06;                                // faint reflection so it reads as glass
+        }
+        col += float3(0.012, 0.016, 0.02);                            // ambient panel glow
         return float4(col, 1.0);
     }
 
