@@ -73,6 +73,17 @@ enum NowPlayingProbe {
         let album: String
         let artwork: NSImage?
         let isPlaying: Bool      // false = paused (a current track exists but is held)
+        let elapsed: Double      // playhead position, seconds
+        let duration: Double     // track length, seconds (0 = unknown, e.g. a stream)
+    }
+
+    /// A cheap playhead reading (no metadata, no artwork) used to re-sync the
+    /// locally interpolated progress between the heavier `nowPlaying` queries —
+    /// so a manual scrub or drift is caught without re-fetching artwork.
+    struct Playback {
+        let elapsed: Double
+        let duration: Double
+        let isPlaying: Bool
     }
 
     static func nowPlaying(_ completion: @escaping (NowPlayingInfo?) -> Void) {
@@ -94,16 +105,19 @@ enum NowPlayingProbe {
             set sep to character id 31
             if player state is playing then
                 set t to current track
-                return "playing" & sep & (name of t) & sep & (artist of t) & sep & (album of t)
+                return "playing" & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & ((player position) as text) & sep & ((duration of t) as text)
             else if player state is paused then
                 set t to current track
-                return "paused" & sep & (name of t) & sep & (artist of t) & sep & (album of t)
+                return "paused" & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & ((player position) as text) & sep & ((duration of t) as text)
             end if
             return ""
         end tell
         """
-        guard let f = run(script), f.count == 4 else { return nil }
-        return NowPlayingInfo(title: f[1], artist: f[2], album: f[3], artwork: musicArtwork(), isPlaying: f[0] == "playing")
+        guard let f = run(script), f.count == 6 else { return nil }
+        // Music reports both player position and track duration in seconds.
+        return NowPlayingInfo(title: f[1], artist: f[2], album: f[3], artwork: musicArtwork(),
+                              isPlaying: f[0] == "playing",
+                              elapsed: Double(f[4]) ?? 0, duration: Double(f[5]) ?? 0)
     }
 
     private static func musicArtwork() -> NSImage? {
@@ -124,17 +138,54 @@ enum NowPlayingProbe {
             set sep to character id 31
             if player state is playing then
                 set t to current track
-                return "playing" & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & (artwork url of t)
+                return "playing" & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & (artwork url of t) & sep & ((player position) as text) & sep & ((duration of t) as text)
             else if player state is paused then
                 set t to current track
-                return "paused" & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & (artwork url of t)
+                return "paused" & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & (artwork url of t) & sep & ((player position) as text) & sep & ((duration of t) as text)
             end if
             return ""
         end tell
         """
-        guard let f = run(script), f.count == 5 else { return nil }
+        guard let f = run(script), f.count == 7 else { return nil }
         var art: NSImage?
         if let url = URL(string: f[4]), let d = try? Data(contentsOf: url) { art = NSImage(data: d) }
-        return NowPlayingInfo(title: f[1], artist: f[2], album: f[3], artwork: art, isPlaying: f[0] == "playing")
+        // Spotify player position is seconds; track duration is milliseconds.
+        return NowPlayingInfo(title: f[1], artist: f[2], album: f[3], artwork: art,
+                              isPlaying: f[0] == "playing",
+                              elapsed: Double(f[5]) ?? 0, duration: (Double(f[6]) ?? 0) / 1000)
+    }
+
+    // MARK: Lightweight playhead (position only) for progress re-sync
+
+    static func playback(_ completion: @escaping (Playback?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let p = probePlayback()
+            DispatchQueue.main.async { completion(p) }
+        }
+    }
+
+    private static func probePlayback() -> Playback? {
+        if isRunning("com.apple.Music"), let p = playbackFor(app: "Music", durationInMS: false) { return p }
+        if isRunning("com.spotify.client"), let p = playbackFor(app: "Spotify", durationInMS: true) { return p }
+        return nil
+    }
+
+    private static func playbackFor(app: String, durationInMS: Bool) -> Playback? {
+        let script = """
+        tell application "\(app)"
+            set sep to character id 31
+            if player state is playing then
+                set t to current track
+                return "playing" & sep & ((player position) as text) & sep & ((duration of t) as text)
+            else if player state is paused then
+                set t to current track
+                return "paused" & sep & ((player position) as text) & sep & ((duration of t) as text)
+            end if
+            return ""
+        end tell
+        """
+        guard let f = run(script), f.count == 3 else { return nil }
+        let dur = (Double(f[2]) ?? 0) / (durationInMS ? 1000 : 1)
+        return Playback(elapsed: Double(f[1]) ?? 0, duration: dur, isPlaying: f[0] == "playing")
     }
 }

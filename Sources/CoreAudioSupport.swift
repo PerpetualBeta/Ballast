@@ -61,6 +61,14 @@ enum CoreAudioSupport {
         scalar(device, kAudioDevicePropertyNominalSampleRate, Float64(0))
     }
 
+    /// The device's physical transport (`kAudioDeviceTransportType…`), e.g.
+    /// built-in, USB, or Bluetooth. Lets callers tell a battery-powered
+    /// wireless output apart from a wired/built-in one before doing any
+    /// (more expensive) battery lookup.
+    static func deviceTransportType(_ device: AudioObjectID) -> UInt32? {
+        scalar(device, kAudioDevicePropertyTransportType, UInt32(0))
+    }
+
     // MARK: Processes
 
     /// Translate a Unix PID to its Core Audio process object, so the app can
