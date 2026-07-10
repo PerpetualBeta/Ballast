@@ -336,8 +336,13 @@ struct NowPlayingView: View {
 
     @ViewBuilder private func progressBar(_ s: CGFloat, width: CGFloat) -> some View {
         if model.duration > 0 {
+            // Derive both labels from the SAME whole-second elapsed value so
+            // they tick together: rounding elapsed and (duration - elapsed)
+            // independently makes them flip at different fractional instants.
+            let total = Int(model.duration.rounded())
+            let elapsed = max(0, min(total, Int(model.elapsed)))
+            let remaining = total - elapsed
             let frac = min(1, max(0, model.elapsed / model.duration))
-            let remaining = max(0, model.duration - model.elapsed)
             let barH = s * 0.014
             VStack(spacing: s * 0.016) {
                 GeometryReader { g in
@@ -348,7 +353,7 @@ struct NowPlayingView: View {
                 }
                 .frame(height: barH)
                 HStack(spacing: 0) {
-                    Text(timeString(model.elapsed))
+                    Text(timeString(elapsed))
                     Spacer(minLength: 0)
                     Text("-" + timeString(remaining))
                 }
@@ -359,8 +364,8 @@ struct NowPlayingView: View {
         }
     }
 
-    private func timeString(_ seconds: Double) -> String {
-        let total = Int(seconds.rounded())
+    private func timeString(_ seconds: Int) -> String {
+        let total = max(0, seconds)
         let h = total / 3600, m = (total % 3600) / 60, sec = total % 60
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%d:%02d", m, sec)
     }
@@ -385,7 +390,7 @@ struct NowPlayingView: View {
             if includeThisTrack {
                 statRow("This track", st.known ? "Known \u{2014} fixed level" : "Learning\u{2026}", s)
                 if model.duration > 0 {
-                    statRow("Length", timeString(model.duration), s)
+                    statRow("Length", timeString(Int(model.duration.rounded())), s)
                 }
             }
             statRow("Learned", "\(st.learned) tracks", s)
