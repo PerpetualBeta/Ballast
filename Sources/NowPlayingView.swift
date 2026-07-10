@@ -10,7 +10,7 @@ struct NowPlayingStats: Equatable {
     var known = false
     var learned = 0
     var output = "\u{2014}"
-    var battery: Int?          // output-device charge %, when it's a wireless device
+    var battery: OutputBattery.Status = .unavailable   // wireless output charge
     var plays = 0
     var love: Double?
     var audioPresent = false
@@ -50,7 +50,7 @@ final class NowPlayingModel: ObservableObject {
     // Output-device battery: slow-moving, so poll rarely (and immediately when
     // the output device changes). Resolved off-main; system_profiler is only
     // spawned when the output is Bluetooth.
-    private var batteryLevel: Int?
+    private var batteryStatus: OutputBattery.Status = .unavailable
     private var lastBatteryPoll: Double = 0
     private var lastOutputName = ""
     private static let batteryPollInterval: Double = 60.0
@@ -138,9 +138,25 @@ final class NowPlayingModel: ObservableObject {
     private func pollBatteryIfDue() {
         guard now - lastBatteryPoll > Self.batteryPollInterval else { return }
         lastBatteryPoll = now
+        let deviceAtPoll = lastOutputName
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let level = OutputBattery.currentOutputBattery()
-            DispatchQueue.main.async { self?.batteryLevel = level }
+            let status = OutputBattery.currentOutputStatus()
+            DispatchQueue.main.async {
+                guard let self, self.lastOutputName == deviceAtPoll else { return }
+                switch status {
+                case .level:
+                    self.batteryStatus = status          // a fresh reading always wins
+                case .unknown:
+                    // Sticky: Bluetooth headphones advertise their battery only
+                    // intermittently. Keep a last-known level rather than
+                    // downgrading to "tbc" on a momentarily empty poll; only
+                    // show "tbc" if we've never had a level for this device.
+                    if case .level = self.batteryStatus { break }
+                    self.batteryStatus = .unknown
+                case .unavailable:
+                    self.batteryStatus = .unavailable    // wired/built-in — no row
+                }
+            }
         }
     }
 
@@ -152,7 +168,7 @@ final class NowPlayingModel: ObservableObject {
         if outputName != lastOutputName {
             lastOutputName = outputName
             lastBatteryPoll = 0
-            batteryLevel = nil
+            batteryStatus = .unavailable
         }
         let next = NowPlayingStats(
             active: e.isActive,
@@ -162,7 +178,7 @@ final class NowPlayingModel: ObservableObject {
             known: e.currentTrackKnown,
             learned: e.libraryCount,
             output: outputName,
-            battery: batteryLevel,
+            battery: batteryStatus,
             plays: e.currentTrackPlays,
             love: e.currentTrackLove,
             audioPresent: e.hasAudioSignal
@@ -273,6 +289,20 @@ struct NowPlayingView: View {
         .clipShape(RoundedRectangle(cornerRadius: side * 0.06, style: .continuous))
         .shadow(color: .black.opacity(0.5), radius: side * 0.05, y: side * 0.02)
         .opacity(paused ? 0.72 : 1)
+        .overlay { if paused { pauseBadge(side) } }
+    }
+
+    /// A pause glyph centred on the artwork while paused. A translucent dark
+    /// disc keeps the white bars legible over light covers; the soft shadow
+    /// keeps them legible over dark ones — contrast either way.
+    private func pauseBadge(_ side: CGFloat) -> some View {
+        ZStack {
+            Circle().fill(.black.opacity(0.5)).frame(width: side * 0.32, height: side * 0.32)
+            Image(systemName: "pause.fill")
+                .font(.system(size: side * 0.16, weight: .semibold))
+                .foregroundStyle(.white)
+        }
+        .shadow(color: .black.opacity(0.45), radius: side * 0.03)
     }
 
     /// The metadata + stats column. The hero title/artist/album always render
@@ -287,7 +317,7 @@ struct NowPlayingView: View {
                 available: geo.size.height,
                 spacing: s * 0.026,
                 statsTopPad: s * 0.03,
-                header: { headerBlock(s, paused: paused) },
+                header: { headerBlock(s) },
                 stats: { statsPanel(model.stats, s, includeThisTrack: true) }
             )
             .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
@@ -295,13 +325,8 @@ struct NowPlayingView: View {
         }
     }
 
-    @ViewBuilder private func headerBlock(_ s: CGFloat, paused: Bool) -> some View {
+    @ViewBuilder private func headerBlock(_ s: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: s * 0.026) {
-            if paused {
-                Text("PAUSED").font(.system(size: s * 0.032, weight: .heavy)).tracking(1.5)
-                    .padding(.horizontal, s * 0.03).padding(.vertical, s * 0.012)
-                    .background(.white.opacity(0.16), in: Capsule()).foregroundStyle(.white.opacity(0.9))
-            }
             Text(model.title).font(.system(size: s * 0.088, weight: .bold))
                 .lineLimit(1).minimumScaleFactor(0.5).foregroundStyle(.white)
             Text(model.artist).font(.system(size: s * 0.058))
@@ -395,8 +420,10 @@ struct NowPlayingView: View {
             }
             statRow("Learned", "\(st.learned) tracks", s)
             statRow("Output", st.output, s)
-            if let battery = st.battery {
-                batteryRow(battery, s)
+            switch st.battery {
+            case .level(let pct): batteryRow(pct, s)
+            case .unknown:        statRow("Battery", "tbc", s)
+            case .unavailable:    EmptyView()
             }
         }
         .padding(s * 0.036)

@@ -3,8 +3,6 @@ import Foundation
 
 /// Resolves the battery charge of the current output device when that device is
 /// a battery-powered Bluetooth output (wireless headphones, earbuds, speakers).
-/// Returns nil for wired/built-in/AirPlay outputs, or for a Bluetooth device
-/// that simply doesn't report a battery.
 ///
 /// macOS only surfaces Bluetooth battery through `system_profiler`; the Core
 /// Audio HAL and the public IOBluetooth API don't expose it for A2DP audio
@@ -13,17 +11,30 @@ import Foundation
 /// costs a single cheap property read and never spawns a process.
 enum OutputBattery {
 
-    /// Battery percentage (0–100) of the current output device, or nil.
-    static func currentOutputBattery() -> Int? {
+    /// The output device's battery state.
+    /// - `unavailable`: a wired/built-in/AirPlay output — no battery to show.
+    /// - `unknown`: a wireless (Bluetooth) output that isn't advertising a
+    ///   level right now (headphones do this intermittently) — show "tbc".
+    /// - `level`: a wireless output reporting a charge percentage (0–100).
+    enum Status: Equatable {
+        case unavailable
+        case unknown
+        case level(Int)
+    }
+
+    static func currentOutputStatus() -> Status {
         guard let dev = CoreAudioSupport.defaultOutputDevice(),
               let transport = CoreAudioSupport.deviceTransportType(dev),
               transport == kAudioDeviceTransportTypeBluetooth
                 || transport == kAudioDeviceTransportTypeBluetoothLE
-        else { return nil }
+        else { return .unavailable }
 
         let uidHex = hexOnly(CoreAudioSupport.deviceUID(dev) ?? "")
         let name = CoreAudioSupport.deviceName(dev)
-        return batteryFromSystemProfiler(addressHex: uidHex, deviceName: name)
+        if let level = batteryFromSystemProfiler(addressHex: uidHex, deviceName: name) {
+            return .level(level)
+        }
+        return .unknown
     }
 
     // MARK: system_profiler
