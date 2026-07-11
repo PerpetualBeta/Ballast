@@ -45,6 +45,7 @@ The current track's title can optionally be shown to the right of the icon (Sett
 - **Comfort level** — a simple *Quieter ←→ Louder* slider (the loudness target; −16 LUFS by default)
 - **Maximum adjustment** — caps how far Ballast will push any track (±12 dB by default)
 - **Now** — live output device, this track's loudness, and the current adjustment
+- **Library** — the number of tracks Ballast has learned, and a **Reset Play Counts & Love** action that zeroes every track's play count and "love" rating while keeping the learned loudness, so levelling is unaffected (useful after a burst of shuffle-listening skews the counts while the library is still building)
 - **Visualiser** — choose the style, optionally tint it from your desktop wallpaper (Match or Complement), and keep the window on top
 - **Show current track title** — display the playing track's title to the right of the menu-bar icon, with an adjustable maximum length; longer titles are trimmed at a word boundary with an ellipsis (UTF-8 safe), and nothing is shown while paused or stopped. Off by default.
 - **Permission** — audio-capture status, with a button to grant it or open System Settings
