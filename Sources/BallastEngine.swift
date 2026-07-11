@@ -64,6 +64,15 @@ final class BallastEngine {
     private var playerActive = false        // Music/Spotify actively playing
 
     var libraryCount: Int { library.count }
+
+    /// Zero all play counts / "love" (keeps the learned loudness). Surfaced in
+    /// Settings so a burst of shuffle-listening during learning-in can be
+    /// cleared without wiping the levelling library.
+    func resetPlayStats() {
+        library.resetPlayStats()
+        blLog("play stats reset — \(library.count) tracks kept, plays zeroed")
+    }
+
     var currentTrackKnown: Bool { processor.isKnownTrack }
     var currentTrackPlays: Int {
         guard let key = currentKey else { return 0 }

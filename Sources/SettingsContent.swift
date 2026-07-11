@@ -15,6 +15,7 @@ struct BallastSettingsContent: View {
     @State private var vizMode: String
     @State private var vizOnTop: Bool
     @State private var vizColour: String
+    @State private var showResetConfirm = false
 
     init(delegate: AppDelegate) {
         self.delegate = delegate
@@ -26,6 +27,11 @@ struct BallastSettingsContent: View {
         _vizMode = State(initialValue: BallastSettings.visualizerMode)
         _vizOnTop = State(initialValue: BallastSettings.visualizerKeepOnTop)
         _vizColour = State(initialValue: BallastSettings.visualizerColourSource)
+    }
+
+    private var learnedCountText: String {
+        let n = delegate.engine.libraryCount
+        return "\(n) \(n == 1 ? "track" : "tracks")"
     }
 
     var body: some View {
@@ -76,6 +82,23 @@ struct BallastSettingsContent: View {
 
         Section("Now") {
             MeterView(engine: delegate.engine)
+        }
+
+        Section("Library") {
+            LabeledContent("Learned") {
+                Text(learnedCountText).foregroundStyle(.secondary).monospacedDigit()
+            }
+            Button("Reset Play Counts & Love\u{2026}", role: .destructive) {
+                showResetConfirm = true
+            }
+            Text("Zeroes every track\u{2019}s play count and \u{201C}love\u{201D} rating while keeping the learned loudness \u{2014} levelling is unaffected. Useful when a spell of shuffle-listening skews the counts while the library is still building up.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .alert("Reset play counts & love?", isPresented: $showResetConfirm) {
+            Button("Reset", role: .destructive) { delegate.engine.resetPlayStats() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Every track\u{2019}s play count and \u{201C}love\u{201D} rating returns to zero. The learned loudness is kept, so levelling is unaffected. This can\u{2019}t be undone.")
         }
 
         Section("Menu Bar") {

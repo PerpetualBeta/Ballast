@@ -58,7 +58,11 @@ final class LoudnessLibrary {
         guard integratedLUFS.isFinite else { return }
         if var entry = entries[key],
            abs(entry.durationMS - durationMS) <= Self.durationToleranceMS {
-            let n = Double(entry.plays)
+            // Weight the existing value by its play count, but never below 1 —
+            // otherwise a track whose plays were reset to 0 would have its
+            // learned loudness wholly overwritten by the next single
+            // measurement instead of refined by it.
+            let n = Double(max(entry.plays, 1))
             entry.integratedLUFS = (entry.integratedLUFS * n + integratedLUFS) / (n + 1)
             entry.plays += 1
             entry.lastSeen = now
@@ -74,6 +78,16 @@ final class LoudnessLibrary {
     /// Play count for a known track (0 if not learned yet).
     func plays(key: String, durationMS: Int) -> Int {
         lookup(key: key, durationMS: durationMS)?.plays ?? 0
+    }
+
+    /// Zero every track's play count — and therefore its "love" rating, which
+    /// is derived from plays — while keeping the learned loudness, duration and
+    /// metadata. Clears the skew from a burst of shuffle-listening during the
+    /// learning-in period; levelling is untouched, so known tracks still level
+    /// from the first sample.
+    func resetPlayStats() {
+        for key in entries.keys { entries[key]?.plays = 0 }
+        save()
     }
 
     /// 0...1 percentile rank of this track's play count among all learned
