@@ -71,7 +71,7 @@ final class NowPlayingModel: ObservableObject {
             RunLoop.main.add(t, forMode: .common)
             timer = t
         }
-        refresh()
+        refreshOnOpen()
         refreshStats()
     }
 
@@ -89,18 +89,45 @@ final class NowPlayingModel: ObservableObject {
         refreshStats()
     }
 
-    func refresh() {
+    /// Probe the player once and reflect whatever comes back (clearing to the
+    /// idle state on nothing). The fallback when a notification arrives without a
+    /// track name — a pause/stop, where the player isn't lagging.
+    func refresh() { probeCurrent(retryIfEmpty: false, attemptsLeft: 0) }
+
+    /// Probe on window-open. Here we don't yet know which track to expect, so if
+    /// the one-shot probe comes back empty *while audio is actually playing*,
+    /// retry briefly (bounded) — otherwise opening the visualiser mid-track
+    /// strands it on the metadata-less "Playing" screen until the next track
+    /// change, even though a track is plainly playing.
+    private func refreshOnOpen() { probeCurrent(retryIfEmpty: true, attemptsLeft: Self.openProbeAttempts) }
+
+    private func probeCurrent(retryIfEmpty: Bool, attemptsLeft: Int) {
         NowPlayingProbe.nowPlaying { [weak self] info in
             guard let self else { return }
-            self.artwork = info?.artwork
-            self.title = info?.title ?? ""
-            self.artist = info?.artist ?? ""
-            self.album = info?.album ?? ""
-            self.hasTrack = (info != nil)
-            self.isPlaying = info?.isPlaying ?? false
             if let info {
+                self.artwork = info.artwork
+                self.title = info.title
+                self.artist = info.artist
+                self.album = info.album
+                self.hasTrack = true
+                self.isPlaying = info.isPlaying
                 self.syncPlayhead(elapsed: info.elapsed, duration: info.duration)
-            } else {
+                return
+            }
+            // Nothing came back. If audio is playing, the player just didn't
+            // answer this probe in time — try again shortly. A notification
+            // arriving meanwhile (hasTrack) supersedes us, and a browser (audio
+            // but no scriptable track) simply falls through to the "Playing"
+            // screen once the attempts are spent.
+            if retryIfEmpty, attemptsLeft > 1, !self.hasTrack, self.engine?.hasAudioSignal == true {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.metadataRetryDelay) { [weak self] in
+                    self?.probeCurrent(retryIfEmpty: true, attemptsLeft: attemptsLeft - 1)
+                }
+                return
+            }
+            if !retryIfEmpty {
+                self.artwork = nil; self.title = ""; self.artist = ""; self.album = ""
+                self.hasTrack = false; self.isPlaying = false
                 self.duration = 0; self.elapsed = 0
             }
         }
@@ -110,6 +137,9 @@ final class NowPlayingModel: ObservableObject {
     // scripting dictionary catches up to the notification, and how long between.
     private static let metadataMatchAttempts = 6
     private static let metadataRetryDelay = 0.35
+    // How many times the window-open probe retries while audio is playing but
+    // the player hasn't answered yet (same cadence as the track-change retry).
+    private static let openProbeAttempts = 6
 
     /// Handle a track-change notification. The notification's `userInfo` carries
     /// the authoritative title/artist/album, so text updates *immediately* —
