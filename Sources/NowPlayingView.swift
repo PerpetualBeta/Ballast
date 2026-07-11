@@ -61,8 +61,8 @@ final class NowPlayingModel: ObservableObject {
         if observers.isEmpty {
             let center = DistributedNotificationCenter.default()
             for name in ["com.apple.Music.playerInfo", "com.apple.iTunes.playerInfo", "com.spotify.client.PlaybackStateChanged"] {
-                observers.append(center.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] _ in
-                    self?.refresh()
+                observers.append(center.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] note in
+                    self?.applyNotification(note)
                 })
             }
         }
@@ -102,6 +102,63 @@ final class NowPlayingModel: ObservableObject {
                 self.syncPlayhead(elapsed: info.elapsed, duration: info.duration)
             } else {
                 self.duration = 0; self.elapsed = 0
+            }
+        }
+    }
+
+    // How many times to re-probe for artwork/playhead while the player's
+    // scripting dictionary catches up to the notification, and how long between.
+    private static let metadataMatchAttempts = 6
+    private static let metadataRetryDelay = 0.35
+
+    /// Handle a track-change notification. The notification's `userInfo` carries
+    /// the authoritative title/artist/album, so text updates *immediately* —
+    /// whereas the player's AppleScript `current track` lags a boundary by up to
+    /// a second, which is what made the visualiser paint the outgoing track.
+    /// Artwork and the playhead still come from AppleScript, but only once a
+    /// probe agrees on the track (validated, with a short bounded retry).
+    private func applyNotification(_ note: Notification) {
+        let info = note.userInfo ?? [:]
+        let state = (info["Player State"] as? String) ?? ""
+        let playing = state.isEmpty || state.caseInsensitiveCompare("Playing") == .orderedSame
+        let name = (info["Name"] as? String) ?? ""
+
+        // Paused/stopped, or a notification without a track name (some sources):
+        // a full probe is correct here — the player isn't lagging on a pause.
+        guard playing, !name.isEmpty else { refresh(); return }
+
+        let newArtist = (info["Artist"] as? String) ?? ""
+        let newAlbum = (info["Album"] as? String) ?? ""
+        let changed = name.caseInsensitiveCompare(title) != .orderedSame
+            || newArtist.caseInsensitiveCompare(artist) != .orderedSame
+        title = name
+        artist = newArtist
+        album = newAlbum
+        hasTrack = true
+        isPlaying = true
+        // Drop the outgoing track's artwork/progress at once so nothing stale
+        // lingers under the new title while the validated probe catches up.
+        if changed { artwork = nil; elapsed = 0; duration = 0 }
+        fetchArtworkAndPlayhead(matching: name, attemptsLeft: Self.metadataMatchAttempts)
+    }
+
+    /// Fetch artwork + playhead, accepting them only once the player reports the
+    /// track we're expecting; otherwise retry briefly (bounded) so a boundary
+    /// lag can't leave the outgoing track's cover under the new title.
+    private func fetchArtworkAndPlayhead(matching expected: String, attemptsLeft: Int) {
+        NowPlayingProbe.nowPlaying { [weak self] info in
+            guard let self else { return }
+            // Abandon quietly if another track change superseded this one.
+            guard self.title.caseInsensitiveCompare(expected) == .orderedSame else { return }
+            if let info, info.title.caseInsensitiveCompare(expected) == .orderedSame {
+                self.artwork = info.artwork
+                if !info.album.isEmpty { self.album = info.album }
+                self.isPlaying = info.isPlaying
+                self.syncPlayhead(elapsed: info.elapsed, duration: info.duration)
+            } else if attemptsLeft > 1 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.metadataRetryDelay) { [weak self] in
+                    self?.fetchArtworkAndPlayhead(matching: expected, attemptsLeft: attemptsLeft - 1)
+                }
             }
         }
     }

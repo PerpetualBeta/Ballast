@@ -24,6 +24,13 @@ final class LoudnessLibrary {
     /// as a different recording (remaster, live cut, radio edit).
     private static let durationToleranceMS = 1500
 
+    /// The play-weighted running mean caps its weight here, so a track's learned
+    /// loudness never becomes stubborn: past this many plays each fresh reading
+    /// keeps a fixed share of influence (an exponential moving average over
+    /// roughly the last ~10 plays). That lets the library self-correct a genuine
+    /// drift while one noisy play barely moves an established value.
+    private static let maintenanceWeightCap = 10
+
     private var entries: [String: LearnedTrack] = [:]
     private let fileURL: URL
     private var saveScheduled = false
@@ -51,18 +58,22 @@ final class LoudnessLibrary {
         return entry
     }
 
-    /// Fold a fresh measurement into the library, refining the stored value as
-    /// a play-weighted running mean so repeated listens converge.
+    /// Fold a fresh measurement into the library. The first time a track is
+    /// heard this seeds its value; every play after refines it as a play-weighted
+    /// running mean, so the library keeps itself accurate — a known track is
+    /// re-measured (on the global tap) each play and its stored loudness gently
+    /// self-corrects toward the truth.
     func record(key: String, integratedLUFS: Double, durationMS: Int,
                 title: String?, artist: String?, now: Double) {
         guard integratedLUFS.isFinite else { return }
         if var entry = entries[key],
            abs(entry.durationMS - durationMS) <= Self.durationToleranceMS {
-            // Weight the existing value by its play count, but never below 1 —
-            // otherwise a track whose plays were reset to 0 would have its
-            // learned loudness wholly overwritten by the next single
-            // measurement instead of refined by it.
-            let n = Double(max(entry.plays, 1))
+            // Weight the existing value by its play count — but never below 1
+            // (else a track whose plays were reset to 0 would be wholly
+            // overwritten by one measurement instead of refined) and never above
+            // the maintenance cap (so the value stays perpetually self-correcting
+            // rather than freezing after many plays).
+            let n = Double(min(max(entry.plays, 1), Self.maintenanceWeightCap))
             entry.integratedLUFS = (entry.integratedLUFS * n + integratedLUFS) / (n + 1)
             entry.plays += 1
             entry.lastSeen = now
@@ -72,6 +83,21 @@ final class LoudnessLibrary {
             entries[key] = LearnedTrack(integratedLUFS: integratedLUFS, durationMS: durationMS,
                                         plays: 1, lastSeen: now, title: title, artist: artist)
         }
+        scheduleSave()
+    }
+
+    /// Count a play of an already-known track — advancing its "love" — without
+    /// touching the learned loudness. A fallback for when a known play yields no
+    /// usable whole-track measurement: the play still counts, the stored value
+    /// stands. (A usable play refines the value through `record` instead.)
+    func recordPlay(key: String, durationMS: Int, now: Double) {
+        guard var entry = entries[key] else { return }
+        if durationMS > 0, entry.durationMS > 0,
+           abs(entry.durationMS - durationMS) > Self.durationToleranceMS { return }
+        entry.plays += 1
+        entry.lastSeen = now
+        if entry.durationMS == 0 { entry.durationMS = durationMS }
+        entries[key] = entry
         scheduleSave()
     }
 

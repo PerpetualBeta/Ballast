@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 680" role="img"
-     aria-label="How Ballast levels audio: every app's audio is captured by a Core Audio process tap that mutes the original path, buffered through an aggregate device and lock-free ring clocked by the output device, then measured and levelled per track by the loudness engine, which learns each track into an on-disk library, before playing to your speakers or headphones.">
+     aria-label="How Ballast levels audio: every app's audio is captured by a Core Audio process tap that mutes the original path — system-wide, or just the music app while learning a new track so system sounds can't pollute the measurement — buffered through an aggregate device and lock-free ring clocked by the output device, then measured and levelled per track by the loudness engine, which learns each track into an on-disk library and self-maintains it, before playing to your speakers or headphones.">
   <title>How Ballast levels your audio</title>
   <style>
     text { font-family: system-ui, -apple-system, sans-serif; }
@@ -35,7 +35,7 @@
   <!-- Process tap -->
   <rect x="100" y="192" width="260" height="64" rx="11" class="box"/>
   <text x="230" y="217" text-anchor="middle" class="h">Core Audio process tap</text>
-  <text x="230" y="235" text-anchor="middle" class="b">captures the mix, mutes the direct path</text>
+  <text x="230" y="235" text-anchor="middle" class="b">system-wide, or music-only while learning</text>
   <text x="230" y="250" text-anchor="middle" class="t">AudioHardwareCreateProcessTap</text>
 
   <line x1="230" y1="256" x2="230" y2="300" class="arrow" marker-end="url(#a)"/>
@@ -60,7 +60,7 @@
   <text x="480" y="437" text-anchor="middle" class="h">Loudness library</text>
   <text x="480" y="455" text-anchor="middle" class="b">per-track loudness,</text>
   <text x="480" y="470" text-anchor="middle" class="b">saved on disk</text>
-  <text x="480" y="485" text-anchor="middle" class="t">learns as you listen</text>
+  <text x="480" y="485" text-anchor="middle" class="t">learns, then self-maintains</text>
   <line x1="360" y1="438" x2="380" y2="438" class="arrow" marker-end="url(#a)"/>
   <line x1="382" y1="466" x2="362" y2="466" class="arrow" marker-end="url(#a)"/>
 
