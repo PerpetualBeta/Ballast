@@ -16,7 +16,7 @@ Every app's audio is mixed and sent to your output device. Ballast places a **Co
 
 Loudness is measured with **EBU R128 / ITU-R BS.1770** (LUFS) — the same standard streaming services and broadcasters normalise to — and steered toward your **comfort level** (−16 LUFS by default).
 
-**It learns.** Ballast watches for track changes broadcast by Apple Music and Spotify. The first time it hears a track it measures the whole thing (once you've played ≥ 80% of it) and stores its loudness, keyed by the track's identity — measuring the **music in isolation**, so a notification or another app playing over the top never colours the stored level. Every time after that, it recognises the track and applies one fixed, dynamics-preserving gain **from the first sample** — no ramp, no guesswork.
+**It learns.** Ballast watches for track changes broadcast by Apple Music and Spotify. The first time it hears a track it measures the whole thing (once you've played ≥ 80% of it) and stores its loudness, keyed by the track's identity. Every time after that, it recognises the track and applies one fixed, dynamics-preserving gain **from the first sample** — no ramp, no guesswork.
 
 | Situation | What Ballast does |
 |-----------|-------------------|
@@ -98,11 +98,10 @@ Requires GNU Make 4.x (`brew install make` → `gmake`). Signed, notarised relea
 
 Driver-free, two real-time callbacks sharing one hardware clock:
 
-![How Ballast levels your audio: a global process tap captures the whole mix (muting the originals) and is buffered through an aggregate device and lock-free ring clocked by the output device, then levelled by the loudness engine and played to your speakers; in parallel, a second tap scoped to just Apple Music or Spotify captures the current track in isolation, and the engine measures that music-only stream to set the level and learn each track into an on-disk library.](assets/how-it-works.svg)
+![How Ballast levels your audio: app audio is captured by a muted process tap, buffered through an aggregate device and lock-free ring clocked by the output device, levelled per track by the loudness engine that learns each track into an on-disk library, then played to your speakers.](assets/how-it-works.svg)
 
 - A **global process tap** (`AudioHardwareCreateProcessTap`, `.mutedWhenTapped`, excluding Ballast itself) captures the system mix and mutes its direct path, so you hear only the processed version.
 - A **private aggregate device** clocked by the real output device carries the tap; an input IOProc drains it into a lock-free ring, and an output IOProc on the real device applies the DSP and plays it. Both callbacks run on the same clock, so the ring only absorbs their phase offset.
-- **Learning measures the music in isolation.** When Apple Music or Spotify is playing, a **second process tap scoped to just that app** (its own aggregate + input IOProc, clocked by the same output device) feeds the loudness measurement, so a track's learned value only ever reflects the music — a notification, an alert, or another app (which the global tap still carries for levelling) can't skew it. When no such player is driving (browser/YouTube), the global tap's own measurement steers the live gain instead.
 - The **DSP** K-weights the signal (BS.1770, coefficients derived per sample-rate), runs a gated **integrated-loudness meter** to learn the whole-track value, and applies either the learned fixed gain (known track) or a live loud-anchored gain (new track), followed by a true-peak look-ahead limiter that 4x-oversamples each channel to hold inter-sample peaks under −1 dBFS (not just sample peaks).
 - **Track changes** come from the public `com.apple.Music.playerInfo` / `com.spotify.client.PlaybackStateChanged` distributed notifications — reliable across gapless playback, and immune to a track's own silent passages. (The general MediaRemote framework is entitlement-gated for third-party apps since macOS 15.4, so Ballast doesn't rely on it.)
 

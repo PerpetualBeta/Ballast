@@ -328,23 +328,15 @@ final class BallastEngine {
     /// Torn down when the source isn't a known music player (browser/YouTube fall
     /// back to the global tap's own measurement).
     private func updateMeasurementTap() {
+        // DISABLED. A per-process tap on the music app diverts that app's audio
+        // into the measurement aggregate, pulling it out of the global tap that
+        // feeds output — which silences playback (seen live: measPeak≈1.0 while
+        // inPeak/outPeak=0). Isolating the music from a *separate* tap/aggregate
+        // is fundamentally incompatible with the global output tap on this OS.
+        // Learning measures the global mix again, as it shipped originally,
+        // until a non-diverting isolation approach exists.
         measurementTap.teardown()
         processor.measuresExternally = false
-        guard isActive, let uid = outputDeviceUID, let process = musicProcessObject() else { return }
-
-        // The tap's IOProc measures only while it's the active source (guarded
-        // by the same flag the output path checks) so exactly one path ever
-        // feeds `measure`.
-        measurementTap.onBlock = { [processor] buf, frames, ch in
-            if processor.measuresExternally { processor.measure(buf, frames: frames, channels: ch) }
-        }
-        if measurementTap.build(process: process, outputDeviceUID: uid) {
-            processor.measuresExternally = playerActive
-            blLog("measurement tap ▶ process=\(process) ch=\(measurementTap.channels) external=\(playerActive)")
-        } else {
-            measurementTap.onBlock = nil
-            blLog("measurement tap failed to build for process=\(process)")
-        }
     }
 
     /// Fold the just-finished track's measured loudness into the library — but

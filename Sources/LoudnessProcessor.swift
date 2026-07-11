@@ -275,14 +275,9 @@ final class LoudnessProcessor {
             shortTermMS[c] += (acc / Double(frames) - shortTermMS[c]) * loudnessAlpha
             sumShortMS += shortTermMS[c]
         }
-        // Feed the whole-track (learning) meter ONLY from the isolated music
-        // tap — never the global fallback. Otherwise audio that plays while a
-        // music track is paused (a browser, a notification) would fold into
-        // that track's learned loudness. The live anchor/gain below still runs
-        // in both modes, so browser/YouTube is levelled either way.
-        if measuresExternally {
-            integratedMeter.add(sumSquares: blockSumSquares, frames: frames)
-        }
+        // Feed the (already K-weighted) power to the integrated meter to learn
+        // this track's whole-track loudness.
+        integratedMeter.add(sumSquares: blockSumSquares, frames: frames)
 
         let shortLoudness = sumShortMS > 0 ? Self.loudnessOffset + 10.0 * log10(sumShortMS) : -120.0
         meterSourceLoudness = Float(shortLoudness)
