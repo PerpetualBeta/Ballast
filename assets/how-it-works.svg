@@ -81,5 +81,6 @@
   <line x1="490" y1="434" x2="490" y2="468" class="arrow" marker-end="url(#a)"/>
   <line x1="512" y1="468" x2="512" y2="436" class="arrow" marker-end="url(#a)"/>
 
-  <text x="340" y="575" text-anchor="middle" class="t">Track changes come from Apple Music / Spotify, so Ballast knows which track to learn &#8212; and it learns from the isolated music tap, so a notification or another app never skews a track&#8217;s level.</text>
+  <text x="340" y="566" text-anchor="middle" class="t">Track changes come from Apple Music / Spotify, so Ballast knows which track to learn &#8212; and it learns</text>
+  <text x="340" y="582" text-anchor="middle" class="t">from the isolated music tap, so a notification or another app never skews a track&#8217;s level.</text>
 </svg>
