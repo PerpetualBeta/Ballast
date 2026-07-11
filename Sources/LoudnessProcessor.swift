@@ -79,6 +79,12 @@ final class LoudnessProcessor {
     /// Enabled by the engine only for sources that don't broadcast track
     /// changes (browser/YouTube); off whenever Music/Spotify is driving.
     var autoRelevelEnabled = false
+    /// When true the loudness is measured elsewhere — the isolated music tap,
+    /// via `measure(...)` — so the output path only *applies* the gain and does
+    /// NOT measure the global mix (which would fold in system sounds). Read on
+    /// both IO threads, written on the main thread; a Bool, so torn reads can't
+    /// occur and a one-block overlap at a transition is harmless.
+    var measuresExternally = false
     private var belowAnchorSeconds = 0.0
     private var limiterEnv: Double = 1.0
 
@@ -221,19 +227,32 @@ final class LoudnessProcessor {
 
     // MARK: Real-time processing (in place on interleaved [frames × channelCount])
 
+    /// Output entry point on the output IO thread: measure the global mix
+    /// (unless an isolated music tap is doing the measuring), then apply gain.
     func processInterleaved(_ buf: UnsafeMutablePointer<Float>, frames: Int) {
         let ch = channelCount
         guard frames > 0, !bypass, ch >= 1, ch <= Self.maxChannels else {
             if diagnosticsEnabled { dbgFrames = frames; dbgOutPeak = AudioBufferSupport.peak(buf, count: frames * max(1, ch)) }
             return
         }
+        if !measuresExternally { measure(buf, frames: frames, channels: ch) }
+        applyGain(buf, frames: frames)
+        if diagnosticsEnabled { dbgFrames = frames; dbgOutPeak = AudioBufferSupport.peak(buf, count: frames * ch) }
+    }
+
+    /// Pass A — measure source loudness (short-term anchor + whole-track
+    /// integrated) and derive the desired gain. Fed either the global mix (on
+    /// the output thread, fallback) or the isolated music (on the measurement-
+    /// tap thread). `ch` is the *measured* stream's channel count, which may
+    /// differ from the output's. Only ever runs on one thread at a time.
+    func measure(_ buf: UnsafeMutablePointer<Float>, frames: Int, channels ch: Int) {
+        guard frames > 0, !bypass, ch >= 1, ch <= Self.maxChannels else { return }
 
         if pendingMeterReset { pendingMeterReset = false; integratedMeter.reset() }
 
         let dt = Double(frames) / sampleRate
         let loudnessAlpha = 1.0 - exp(-dt / Self.loudnessTauSeconds)
 
-        // ── Pass A: K-weighted mean-square per channel → smoothed loudness. ──
         var sumShortMS = 0.0
         var blockSumSquares = 0.0
         for c in 0..<ch {
@@ -256,9 +275,14 @@ final class LoudnessProcessor {
             shortTermMS[c] += (acc / Double(frames) - shortTermMS[c]) * loudnessAlpha
             sumShortMS += shortTermMS[c]
         }
-        // Feed the (already K-weighted) power to the integrated meter to learn
-        // this track's whole-track loudness.
-        integratedMeter.add(sumSquares: blockSumSquares, frames: frames)
+        // Feed the whole-track (learning) meter ONLY from the isolated music
+        // tap — never the global fallback. Otherwise audio that plays while a
+        // music track is paused (a browser, a notification) would fold into
+        // that track's learned loudness. The live anchor/gain below still runs
+        // in both modes, so browser/YouTube is levelled either way.
+        if measuresExternally {
+            integratedMeter.add(sumSquares: blockSumSquares, frames: frames)
+        }
 
         let shortLoudness = sumShortMS > 0 ? Self.loudnessOffset + 10.0 * log10(sumShortMS) : -120.0
         meterSourceLoudness = Float(shortLoudness)
@@ -298,6 +322,14 @@ final class LoudnessProcessor {
             desiredGainDB = (targetLoudnessLUFS - anchorLoudnessLUFS).clamped(to: -maxGainDB ... maxGainDB)
         }
         // during silence (live mode): hold (silence × gain is still silence)
+    }
+
+    /// Pass B — glide the applied gain toward the measured target and apply it,
+    /// then the true-peak look-ahead limiter. Runs on the output thread over the
+    /// output stream (`channelCount`).
+    func applyGain(_ buf: UnsafeMutablePointer<Float>, frames: Int) {
+        let ch = channelCount
+        let dt = Double(frames) / sampleRate
 
         // Glide the applied gain — fast down (protect), gentle up (only after a
         // re-anchor at a track change).
@@ -306,7 +338,7 @@ final class LoudnessProcessor {
         let linearGain = pow(10.0, currentGainDB / 20.0)
         meterGainDB = Float(currentGainDB)
 
-        // ── Pass B: apply gain, then the true-peak look-ahead limiter. ──
+        // ── Apply gain, then the true-peak look-ahead limiter. ──
         let lookahead = lookaheadFrames
         let tpN = Self.tpTapsPerPhase
         let tpL = Self.tpOversample
@@ -353,7 +385,5 @@ final class LoudnessProcessor {
         }
         delayPos = pos
         limiterEnv = env
-
-        if diagnosticsEnabled { dbgFrames = frames; dbgOutPeak = AudioBufferSupport.peak(buf, count: frames * ch) }
     }
 }

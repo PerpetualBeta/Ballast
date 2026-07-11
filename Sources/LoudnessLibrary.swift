@@ -90,6 +90,13 @@ final class LoudnessLibrary {
         save()
     }
 
+    /// Forget everything — every learned track's loudness, plays and metadata.
+    /// A clean slate; the library rebuilds from scratch as you listen again.
+    func resetLibrary() {
+        entries.removeAll()
+        save()
+    }
+
     /// 0...1 percentile rank of this track's play count among all learned
     /// tracks — how "loved" it is versus the rest of the library. nil if the
     /// track isn't known yet.

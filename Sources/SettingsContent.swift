@@ -16,6 +16,7 @@ struct BallastSettingsContent: View {
     @State private var vizOnTop: Bool
     @State private var vizColour: String
     @State private var showResetConfirm = false
+    @State private var showResetLibraryConfirm = false
 
     init(delegate: AppDelegate) {
         self.delegate = delegate
@@ -88,17 +89,29 @@ struct BallastSettingsContent: View {
             LabeledContent("Learned") {
                 Text(learnedCountText).foregroundStyle(.secondary).monospacedDigit()
             }
+
             Button("Reset Play Counts & Love\u{2026}", role: .destructive) {
                 showResetConfirm = true
             }
-            Text("Zeroes every track\u{2019}s play count and \u{201C}love\u{201D} rating while keeping the learned loudness \u{2014} levelling is unaffected. Useful when a spell of shuffle-listening skews the counts while the library is still building up.")
+            .alert("Reset play counts & love?", isPresented: $showResetConfirm) {
+                Button("Reset", role: .destructive) { delegate.engine.resetPlayStats() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Every track\u{2019}s play count and \u{201C}love\u{201D} rating returns to zero. The learned loudness is kept, so levelling is unaffected. This can\u{2019}t be undone.")
+            }
+
+            Button("Reset Learned Library\u{2026}", role: .destructive) {
+                showResetLibraryConfirm = true
+            }
+            .alert("Reset the learned library?", isPresented: $showResetLibraryConfirm) {
+                Button("Reset", role: .destructive) { delegate.engine.resetLibrary() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Ballast will forget every learned track \u{2014} loudness, play counts and ratings \u{2014} and relearn your music from scratch as you listen. This can\u{2019}t be undone.")
+            }
+
+            Text("\u{201C}Reset Play Counts\u{201D} clears the listening stats but keeps every track\u{2019}s learned level. \u{201C}Reset Learned Library\u{201D} forgets everything and starts levelling from scratch.")
                 .font(.caption).foregroundStyle(.secondary)
-        }
-        .alert("Reset play counts & love?", isPresented: $showResetConfirm) {
-            Button("Reset", role: .destructive) { delegate.engine.resetPlayStats() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Every track\u{2019}s play count and \u{201C}love\u{201D} rating returns to zero. The learned loudness is kept, so levelling is unaffected. This can\u{2019}t be undone.")
         }
 
         Section("Menu Bar") {

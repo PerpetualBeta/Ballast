@@ -1,3 +1,4 @@
+import AppKit
 import CoreAudio
 import Foundation
 
@@ -48,7 +49,12 @@ final class BallastEngine {
     private var outputScratch: UnsafeMutablePointer<Float>?
     private var scratchChannels = 0
 
+    /// Isolated measurement tap on the active music process, so learning never
+    /// sees system sounds. Built when a Music/Spotify track is playing.
+    private let measurementTap = MeasurementTap(maxFrames: BallastEngine.maxIOFrames)
+
     private var outputDeviceName: String?
+    private var outputDeviceUID: String?
     private let listenerQueue = DispatchQueue(label: "cc.jorviksoftware.Ballast.devicelistener")
     private var deviceChangeListener: AudioObjectPropertyListenerBlock?
     private var debugTimer: Timer?
@@ -71,6 +77,16 @@ final class BallastEngine {
     func resetPlayStats() {
         library.resetPlayStats()
         blLog("play stats reset — \(library.count) tracks kept, plays zeroed")
+    }
+
+    /// Wipe the entire learned library (loudness, plays, metadata) and start
+    /// over. The current track, if any, immediately reverts to live learning so
+    /// the fresh library begins rebuilding at once.
+    func resetLibrary() {
+        let had = library.count
+        library.resetLibrary()
+        if currentKey != nil { processor.beginTrack(knownIntegratedLUFS: nil) }
+        blLog("learned library reset — \(had) tracks cleared, relearning from scratch")
     }
 
     var currentTrackKnown: Bool { processor.isKnownTrack }
@@ -186,6 +202,10 @@ final class BallastEngine {
     private func setPlayerActive(_ active: Bool) {
         playerActive = active
         processor.autoRelevelEnabled = !active
+        // Learn from the isolated music tap only while the player is actually
+        // playing; when it pauses, fall back to the global tap so any other
+        // source (a browser) is still measured and levelled.
+        processor.measuresExternally = active && measurementTap.isRunning
     }
 
     private func probeCurrentTrack() {
@@ -290,6 +310,41 @@ final class BallastEngine {
         let known = library.lookup(key: id.key, durationMS: id.durationMS)
         processor.beginTrack(knownIntegratedLUFS: known?.integratedLUFS)
         blLog("track ▶ \(id.title ?? "?") — \(id.key) known=\(known.map { String(format: "%.1f LUFS (×\($0.plays))", $0.integratedLUFS) } ?? "no")")
+        updateMeasurementTap()
+    }
+
+    // MARK: Isolated music measurement
+
+    /// The Core Audio process object for the app playing the current track, so
+    /// the measurement tap captures only its audio (never system sounds).
+    private func musicProcessObject() -> AudioObjectID? {
+        guard let key = currentKey else { return nil }
+        let bundleID = key.hasPrefix("sp:") ? "com.spotify.client" : "com.apple.Music"
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else { return nil }
+        return CoreAudioSupport.processObject(forPID: app.processIdentifier)
+    }
+
+    /// (Re)build the isolated measurement tap to match the current music source.
+    /// Torn down when the source isn't a known music player (browser/YouTube fall
+    /// back to the global tap's own measurement).
+    private func updateMeasurementTap() {
+        measurementTap.teardown()
+        processor.measuresExternally = false
+        guard isActive, let uid = outputDeviceUID, let process = musicProcessObject() else { return }
+
+        // The tap's IOProc measures only while it's the active source (guarded
+        // by the same flag the output path checks) so exactly one path ever
+        // feeds `measure`.
+        measurementTap.onBlock = { [processor] buf, frames, ch in
+            if processor.measuresExternally { processor.measure(buf, frames: frames, channels: ch) }
+        }
+        if measurementTap.build(process: process, outputDeviceUID: uid) {
+            processor.measuresExternally = playerActive
+            blLog("measurement tap ▶ process=\(process) ch=\(measurementTap.channels) external=\(playerActive)")
+        } else {
+            measurementTap.onBlock = nil
+            blLog("measurement tap failed to build for process=\(process)")
+        }
     }
 
     /// Fold the just-finished track's measured loudness into the library — but
@@ -360,6 +415,7 @@ final class BallastEngine {
             return false
         }
         outputDeviceID = device
+        outputDeviceUID = deviceUID
         outputDeviceName = CoreAudioSupport.deviceName(device) ?? "Output"
         let deviceSampleRate = CoreAudioSupport.deviceSampleRate(device) ?? 48_000
         blLog("buildGraph: device=\(device) uid=\(deviceUID) name=\(outputDeviceName ?? "?") sr=\(deviceSampleRate)")
@@ -507,6 +563,8 @@ final class BallastEngine {
     }
 
     private func teardownGraph() {
+        measurementTap.teardown()
+        outputDeviceUID = nil
         if outputDeviceID != 0, let proc = outputProcID {
             AudioDeviceStop(outputDeviceID, proc)
             AudioDeviceDestroyIOProcID(outputDeviceID, proc)
@@ -551,7 +609,8 @@ final class BallastEngine {
         blLog("io: writes=\(ring.dbgWriteCallbacks.load(ordering: .relaxed)) reads=\(ring.dbgReadCallbacks.load(ordering: .relaxed))"
             + " depth=\(ring.availableFrames) over=\(ring.dbgOverruns.load(ordering: .relaxed)) under=\(ring.dbgUnderruns.load(ordering: .relaxed))"
             + " inPeak=\(String(format: "%.4f", ring.dbgInputPeak)) outPeak=\(String(format: "%.4f", processor.dbgOutPeak))"
-            + " frames=\(processor.dbgFrames) gain=\(String(format: "%.2f", processor.meterGainDB))dB srcLoud=\(String(format: "%.1f", processor.meterSourceLoudness))")
+            + " frames=\(processor.dbgFrames) gain=\(String(format: "%.2f", processor.meterGainDB))dB srcLoud=\(String(format: "%.1f", processor.meterSourceLoudness))"
+            + " measTap=\(measurementTap.isRunning ? "on" : "off") ext=\(processor.measuresExternally) measPeak=\(String(format: "%.4f", measurementTap.dbgPeak))")
     }
 
     private func stopDebugTimer() {
@@ -589,6 +648,7 @@ final class BallastEngine {
                 let known = library.lookup(key: key, durationMS: currentDurationMS)
                 processor.beginTrack(knownIntegratedLUFS: known?.integratedLUFS)
             }
+            updateMeasurementTap()
             startDebugTimerIfNeeded()
         } else {
             teardownGraph()
