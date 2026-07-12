@@ -77,36 +77,13 @@ final class BallastEngine {
     private var debugTimer: Timer?
 
     // Self-heal watchdog: the capture graph can silently stop delivering audio —
-    // the tap goes quiet even though the player is still playing. Core Audio
-    // doesn't report it; the symptom is a stalled input IOProc or an abrupt drop
-    // to silence. The hard part is NOT mistaking genuine musical silence (a
-    // fade-out, a quiet interlude) for a broken tap — told apart by the descent
-    // (music fades gradually; a dead tap cliffs to zero) and capped so it can
-    // never thrash the graph.
+    // the input IOProc stalls even though the player is still playing (a known
+    // coreaudiod wedge Core Audio never reports). Tap liveness is judged purely by
+    // whether the IOProc is still firing — its write count advancing: a frozen
+    // count is a dead tap and heals; an advancing count is a live tap, and any
+    // silence then belongs to the *source* (a muted/paused app, a quiet passage),
+    // never to the tap, so it is left alone.
     private static let watchdogInterval = 1.0
-    // Well beyond the longest silence a *playing* track realistically contains,
-    // so ordinary quiet passages and inter-song gaps never trip a false rebuild.
-    private static let watchdogHealSeconds = 5.0
-    // A dead tap delivers hard-zero samples; only genuine near-digital silence
-    // should trip a heal. This floor sits far below any real quiet passage —
-    // which never stays this low for whole seconds — so quiet music is never
-    // mistaken for a broken tap. Deliberately well under the −60 dBFS *loudness*
-    // gate (`hasAudioSignal`), which answers a different question.
-    private static let watchdogSilenceDBFS = -90.0
-    private static let watchdogSilencePeak = Float(pow(10.0, watchdogSilenceDBFS / 20.0))
-    // The −60 dBFS loudness gate as a sample peak. The band between it and the
-    // silence floor is "quiet but present" — where a fade-out or a soft passage
-    // lives on its way down. A *dead* tap never passes through this band; it
-    // cliffs from healthy straight to zero.
-    private static let loudnessGatePeak = Float(pow(10.0, LoudnessProcessor.silenceGateLUFS / 20.0))
-    // Consecutive quiet-but-present ticks that mark a *gradual* descent into
-    // silence — i.e. a genuine musical fade (a fade-out or a quiet interlude),
-    // never a broken tap. At the 1 s tick that's ≥ 2 s of ramp.
-    private static let fadeRampTicks = 2
-    // Cap on rebuild attempts for an *abrupt* silence within one episode, so a
-    // silence we can't explain can never thrash the graph the way a fade once
-    // did (11 rebuilds in 51 s). Resets when signal returns.
-    private static let maxSilenceHeals = 2
     // A genuine, transient tap death recovers in a single rebuild. If the graph
     // still isn't delivering audio after this many rebuilds *in quick succession*,
     // the audio system itself is wedged — a known coreaudiod failure mode, often
@@ -118,16 +95,13 @@ final class BallastEngine {
     // than falling silent, and wait for the user to re-enable once it's healthy.
     private static let maxConsecutiveHeals = 4
     // A heal-free run at least this long means the graph recovered, so the next
-    // heal begins a fresh burst rather than counting toward a stand-down. Set
-    // above the 1–5 s spacing between storm heals (a stall heals every tick, an
-    // abrupt silence every `watchdogHealSeconds`) so a real storm always
-    // accumulates in one burst, yet a lone transient followed by healthy playback
-    // never does.
-    private static let healBurstResetSeconds = watchdogHealSeconds * 2
+    // heal begins a fresh burst rather than counting toward a stand-down. The only
+    // heal source is a stalled input IOProc, which heals once per tick, so a real
+    // stall accumulates a full burst in `maxConsecutiveHeals` ticks; the window is
+    // twice that — long enough that a storm always groups into one burst, yet a
+    // lone transient followed by healthy playback never does.
+    private static let healBurstResetSeconds = watchdogInterval * Double(maxConsecutiveHeals) * 2
     private var watchdogTimer: Timer?
-    private var silentSeconds = 0.0
-    private var fadingTicks = 0          // consecutive quiet-but-present ticks (a fade in progress)
-    private var silenceHeals = 0         // rebuilds spent on the current abrupt-silence episode
     private var consecutiveHeals = 0     // global-tap rebuilds in the current burst (→ stand-down)
     private var lastHealAt = 0.0         // systemUptime of the last global-tap heal
     private var lastWatchdogWrites: UInt64 = 0
@@ -778,7 +752,6 @@ final class BallastEngine {
 
     private func startWatchdog() {
         guard watchdogTimer == nil else { return }
-        silentSeconds = 0; fadingTicks = 0; silenceHeals = 0
         lastWatchdogWrites = ring?.dbgWriteCallbacks.load(ordering: .relaxed) ?? 0
         let t = Timer.scheduledTimer(withTimeInterval: Self.watchdogInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.watchdogTick() }
@@ -789,59 +762,30 @@ final class BallastEngine {
     private func stopWatchdog() {
         watchdogTimer?.invalidate()
         watchdogTimer = nil
-        silentSeconds = 0; fadingTicks = 0; silenceHeals = 0
     }
 
     private func watchdogTick() {
         guard isActive, let ring else { return }
-        // Only judge the graph dead while the player insists a track is playing —
-        // a genuine pause/stop legitimately produces silence, as does a browser
+        // Only judge the tap while the player insists a track is playing — a
+        // genuine pause/stop legitimately produces silence, as does a browser
         // that simply isn't making sound.
-        guard playerActive, isPlaying else { silentSeconds = 0; fadingTicks = 0; silenceHeals = 0; return }
+        guard playerActive, isPlaying else { return }
 
+        // Tap liveness is the *only* dead-tap signal. The input IOProc is
+        // hardware-clocked and fires continuously while the graph is alive, so a
+        // whole tick with no new writes means the aggregate has stalled (the known
+        // coreaudiod wedge) — heal at once. If the write count is still advancing
+        // the tap is alive by definition; any silence then is the *source's* — a
+        // muted or paused app whose transport still reports "playing", a hard
+        // track-end, a quiet passage — never a broken tap, and rebuilding can't
+        // restore audio the source isn't producing (it would only thrash toward a
+        // false stand-down). So we judge by `writes`, never by input level: a live
+        // tap delivering zeros is left completely alone.
         let writes = ring.dbgWriteCallbacks.load(ordering: .relaxed)
         let inputFiring = writes != lastWatchdogWrites
         lastWatchdogWrites = writes
-
-        // The input IOProc is hardware-clocked and fires continuously while the
-        // graph is alive; a whole tick with no writes means the aggregate has
-        // stalled — heal at once.
         if !inputFiring {
             heal(reason: "input IOProc stalled while playing")
-            return
-        }
-
-        // Firing but not loud: the tap is alive yet quiet though the player says a
-        // track is playing. The hard part is telling a *broken* tap (delivering
-        // zeros) from *genuine* silence in the music — a fade-out, or a quiet
-        // interlude mid-track (a real one cost 11 rebuilds in 51 s). The tell is
-        // the descent: music fades *gradually* through the −60…−90 dBFS band; a
-        // dead tap cliffs from healthy straight to zero, skipping it.
-        let peak = ring.dbgInputPeak
-        if peak > Self.loudnessGatePeak {
-            // Clear signal — normal playback. Reset every silence tracker.
-            silentSeconds = 0; fadingTicks = 0; silenceHeals = 0
-        } else if peak > Self.watchdogSilencePeak {
-            // Quiet but present: a fade in progress or a soft passage, not (yet)
-            // hard silence. Count the ramp; don't accumulate toward a heal.
-            silentSeconds = 0; fadingTicks += 1
-        } else if fadingTicks >= Self.fadeRampTicks {
-            // Hard silence we *faded* into — genuine musical silence, never a dead
-            // tap. Leave the graph alone (and the meter intact, so a track that
-            // fades out still measures its whole self and learns).
-            silentSeconds = 0
-        } else {
-            // Hard silence with no fade before it — an abrupt drop that may be a
-            // dead tap. Heal, but cap attempts so it can't thrash; wait for signal
-            // to return (resets `silenceHeals`) before trying again.
-            silentSeconds += Self.watchdogInterval
-            if silentSeconds >= Self.watchdogHealSeconds {
-                if silenceHeals < Self.maxSilenceHeals {
-                    silenceHeals += 1
-                    heal(reason: "tap silent \(Int(silentSeconds))s while playing (inPeak=\(String(format: "%.4f", peak)))")
-                }
-                silentSeconds = 0
-            }
         }
     }
 
@@ -850,7 +794,6 @@ final class BallastEngine {
     /// grows, but a wedged audio system keeps failing — past the cap we stand down
     /// instead of thrashing (see `standDown`).
     private func heal(reason: String) {
-        silentSeconds = 0
         let now = ProcessInfo.processInfo.systemUptime
         if now - lastHealAt > Self.healBurstResetSeconds { consecutiveHeals = 0 }
         lastHealAt = now
