@@ -114,27 +114,54 @@ enum NowPlayingProbe {
         end tell
         """
         guard let f = run(script), f.count == 6 else { return nil }
-        // Local artwork first. Apple Music *cloud* tracks (played from a playlist
-        // but not added to the library) expose no artwork through scripting at
-        // all, so fall back to a public cover lookup — the same "fetch a cover
-        // over the network" path Spotify art already takes.
-        let art = musicArtwork() ?? cloudArtwork(title: f[1], artist: f[2], album: f[3])
+        // Local artwork first — but only when it demonstrably belongs to the track
+        // we're about to report (same name). At a track boundary a separate art
+        // query can briefly hand back the *outgoing* track's still-buffered cover,
+        // which — since the view validates only the title — used to latch the old
+        // cover under the new title for the whole track. Any mismatch, or a
+        // cloud/streaming track with no scriptable artwork, falls back to the
+        // public cover lookup by this track's own artist + title (the same
+        // network path Spotify art already takes).
+        let local = musicArtwork()
+        let art: NSImage?
+        if let local, local.name.caseInsensitiveCompare(f[1]) == .orderedSame, let image = local.image {
+            art = image
+        } else {
+            art = cloudArtwork(title: f[1], artist: f[2], album: f[3])
+        }
         // Music reports both player position and track duration in seconds.
         return NowPlayingInfo(title: f[1], artist: f[2], album: f[3], artwork: art,
                               isPlaying: f[0] == "playing",
                               elapsed: Double(f[4]) ?? 0, duration: Double(f[5]) ?? 0)
     }
 
-    private static func musicArtwork() -> NSImage? {
+    /// Local artwork for the *currently playing* track, paired with that track's
+    /// name so the caller can confirm the cover belongs to the track it's about
+    /// to display. Name and artwork are read from a single `current track`
+    /// reference, so they can't straddle a track change the way two separate
+    /// scripts could. The image is nil when the track carries no scriptable
+    /// artwork (cloud / streaming tracks, where `data of artwork 1` errors) —
+    /// the caller then falls back to the online lookup.
+    private static func musicArtwork() -> (name: String, image: NSImage?)? {
         let src = """
-        tell application "Music" to get data of artwork 1 of current track
+        tell application "Music"
+            set t to current track
+            set nm to (name of t)
+            try
+                if (count of artworks of t) > 0 then return {nm, (data of artwork 1 of t)}
+            end try
+            return {nm}
+        end tell
         """
         guard let script = NSAppleScript(source: src) else { return nil }
         var error: NSDictionary?
         let out = script.executeAndReturnError(&error)
-        guard error == nil else { return nil }
-        let data = out.data
-        return data.isEmpty ? nil : NSImage(data: data)
+        guard error == nil, out.numberOfItems >= 1, let name = out.atIndex(1)?.stringValue else { return nil }
+        var image: NSImage?
+        if out.numberOfItems >= 2, let data = out.atIndex(2)?.data, !data.isEmpty {
+            image = NSImage(data: data)
+        }
+        return (name, image)
     }
 
     // MARK: Cloud-track artwork fallback (iTunes Search API)
