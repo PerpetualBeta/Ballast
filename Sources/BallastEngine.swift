@@ -64,30 +64,11 @@ final class BallastEngine {
     private var outputScratch: UnsafeMutablePointer<Float>?
     private var scratchChannels = 0
 
-    /// Which processes the single tap captures. Only ONE tap runs at a time —
-    /// a second tap on a process the first already taps would divert that app's
-    /// audio, so isolation is done by *switching* the one tap, never adding one.
-    private enum TapMode { case global, musicOnly }
-    /// `.musicOnly` only while learning an unknown Music/Spotify track (so its
-    /// measurement can't be polluted by system sounds); `.global` for known
-    /// tracks, other sources, and when no music player is running.
-    private var tapMode: TapMode = .global
-    /// True when the current track's measurement is being taken in isolation
-    /// (music-only tap) — the gate for folding it into the learned library.
-    private var currentTrackIsolated = false
-    /// False while the music-only tap is disabled after a delivery failure. It's
-    /// retried after a back-off (below) rather than staying off for the whole
-    /// session, so a transient Core Audio hiccup doesn't silently kill learning.
-    private var musicOnlyTapViable = true
-    /// Music-only recovery. After the tap fails to deliver it's disabled and
-    /// retried once a back-off (longer with each consecutive failure) elapses —
-    /// until a run of failures with no clean pass in between means it just
-    /// doesn't work on this machine, and it stays on the global tap for the
-    /// session. One isolated learn clears the count, so a blip costs nothing.
-    private var musicOnlyDisabledAt = 0.0             // systemUptime when disabled
-    private var musicOnlyFailures = 0                 // consecutive, since last clean pass
-    private static let musicOnlyRetryCooldown = 90.0  // seconds, × failures (linear back-off)
-    private static let musicOnlyMaxFailures = 3       // give up for the session beyond this
+    // A single global process tap captures the whole system mix (everything but
+    // Ballast). Every track — known or new — is measured on it; the library's
+    // self-correcting running mean keeps a value honest across plays, so there's
+    // no need to isolate a first learn on a separate music-only tap (which cost
+    // an audible graph rebuild on every switch into or out of an unknown track).
 
     private var outputDeviceName: String?
     private var outputDeviceUID: String?
@@ -242,12 +223,7 @@ final class BallastEngine {
     }
 
     private func beginGraph() {
-        // Fresh session: start on the global tap, and re-enable music-only
-        // isolation (a prior session may have disabled it after a failure).
-        tapMode = .global
-        currentTrackIsolated = false
-        musicOnlyTapViable = true
-        musicOnlyFailures = 0
+        // Fresh session: clear the self-heal burst counter.
         consecutiveHeals = 0
         lastHealAt = 0
         if buildGraph() {
@@ -316,10 +292,6 @@ final class BallastEngine {
     private func setPlayerActive(_ active: Bool) {
         playerActive = active
         processor.autoRelevelEnabled = !active
-        // A pause/resume changes which tap we want: music-only while actively
-        // learning an unknown track, global when paused (so a browser is still
-        // levelled) or otherwise.
-        applyTapMode()
     }
 
     private func probeCurrentTrack() {
@@ -449,67 +421,18 @@ final class BallastEngine {
     }
 
     private func startTrack(_ id: TrackIdentity) {
-        rearmMusicOnlyIfDue()                // give a recovered tap another go
         currentKey = id.key
         currentDurationMS = id.durationMS
         currentTitle = id.title
         currentArtist = id.artist
         currentTrackStart = Date().timeIntervalSince1970
 
+        // No graph rebuild on a track change — the single global tap already
+        // carries every source. Only the DSP re-anchors per track (a smooth gain
+        // change, not a tap swap), so transitions are seamless.
         let known = library.lookup(key: id.key, durationMS: id.durationMS)
         processor.beginTrack(knownIntegratedLUFS: known?.integratedLUFS)
         blLog("track ▶ \(id.title ?? "?") — \(id.key) known=\(known.map { String(format: "%.1f LUFS (×\($0.plays))", $0.integratedLUFS) } ?? "no")")
-        applyTapMode()
-        // Learn only from a clean, isolated pass. If we couldn't get the
-        // music-only tap this track stays on the global mix and isn't learned
-        // (it retries next play), rather than banking a noise-polluted value.
-        currentTrackIsolated = (tapMode == .musicOnly)
-    }
-
-    // MARK: Isolated music measurement
-
-    /// The Core Audio process object for the app playing the current track, so
-    /// the measurement tap captures only its audio (never system sounds).
-    private func musicProcessObject() -> AudioObjectID? {
-        guard let key = currentKey else { return nil }
-        let bundleID = key.hasPrefix("sp:") ? "com.spotify.client" : "com.apple.Music"
-        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else { return nil }
-        return CoreAudioSupport.processObject(forPID: app.processIdentifier)
-    }
-
-    /// The tap mode we *want* right now. Music-only only while actively learning
-    /// an unknown Music/Spotify track — the sole window where system sounds
-    /// would pollute a value being measured. Everything else (known tracks,
-    /// browsers, paused, nothing playing) uses the global tap, so all audio
-    /// stays levelled.
-    private func desiredTapMode() -> TapMode {
-        guard musicOnlyTapViable else { return .global }
-        guard playerActive, currentKey != nil, !processor.isKnownTrack else { return .global }
-        return musicProcessObject() != nil ? .musicOnly : .global
-    }
-
-    /// Switch the tap if the desired mode changed, rebuilding the graph around
-    /// the new tap. Idempotent — a no-op when the mode already matches, so it's
-    /// safe to call on every track change and play/pause.
-    private func applyTapMode() {
-        guard isActive else { return }
-        let desired = desiredTapMode()
-        guard desired != tapMode else { return }
-        tapMode = desired
-        rebuildGraph(reason: "tap → \(desired == .musicOnly ? "music-only (learning)" : "global")")
-    }
-
-    /// Re-enable the music-only tap once its back-off has elapsed, so a transient
-    /// Core Audio hiccup doesn't kill learning for the rest of the session.
-    /// Called at each track boundary. A machine where the tap simply never works
-    /// gives up after `musicOnlyMaxFailures` (staying on the global tap) rather
-    /// than stuttering into a dead tap on every song.
-    private func rearmMusicOnlyIfDue() {
-        guard !musicOnlyTapViable, musicOnlyFailures < Self.musicOnlyMaxFailures else { return }
-        let cooldown = Self.musicOnlyRetryCooldown * Double(musicOnlyFailures)
-        guard ProcessInfo.processInfo.systemUptime - musicOnlyDisabledAt >= cooldown else { return }
-        blLog("watchdog: re-arming music-only tap (retry \(musicOnlyFailures + 1)/\(Self.musicOnlyMaxFailures))")
-        musicOnlyTapViable = true
     }
 
     /// Fold the just-finished track's measured loudness into the library — but
@@ -539,25 +462,23 @@ final class BallastEngine {
         let now = Date().timeIntervalSince1970
         let usable = measured.isFinite && measured > -70
 
-        if usable, currentTrackIsolated || processor.isKnownTrack {
-            // Fold this play's whole-track loudness into the library:
-            //  • an unknown track measured in isolation → its clean seed value;
-            //  • a known track on the global tap → self-maintenance. A whole-track
-            //    integrated reading is robust to brief system sounds (unlike the
-            //    live anchor, which the isolated first-learn protects), and
-            //    record()'s capped running mean corrects a genuine drift while
-            //    one noisy play barely moves an established value.
+        if usable {
+            // Fold this play's whole-track loudness into the library — a seed for
+            // a new track, self-maintenance for a known one. The whole-track
+            // integrated value (measured on the global mix) is robust to a brief
+            // system sound, and record()'s capped running mean corrects a genuine
+            // drift over plays while one noisy pass barely moves an established
+            // value — so no isolated first-learn is needed.
             library.record(key: key, integratedLUFS: measured, durationMS: currentDurationMS,
                            title: currentTitle, artist: currentArtist, now: now)
-            if currentTrackIsolated { musicOnlyFailures = 0 }   // clean isolated pass — full retry budget restored
-            blLog("\(processor.isKnownTrack ? "refined" : "learned") \(key): \(String(format: "%.1f LUFS", measured)) (heard \(Int(coverage * 100))%, \(currentTrackIsolated ? "isolated" : "global"), library=\(library.count))")
+            blLog("\(processor.isKnownTrack ? "refined" : "learned") \(key): \(String(format: "%.1f LUFS", measured)) (heard \(Int(coverage * 100))%, library=\(library.count))")
         } else if processor.isKnownTrack {
             // Enough heard but no usable measurement — count the play (its "love"
             // grows) and keep the stored level.
             library.recordPlay(key: key, durationMS: currentDurationMS, now: now)
             blLog("played \(key): play counted, level kept (no usable measurement)")
         } else {
-            blLog("not learned \(key): unknown track not measured in isolation (\(Int(coverage * 100))%)")
+            blLog("not learned \(key): no usable measurement (\(Int(coverage * 100))%)")
         }
     }
 
@@ -610,25 +531,12 @@ final class BallastEngine {
         }
         blLog("buildGraph: pid=\(getpid()) selfProcessObject=\(selfProcess)")
 
-        // 1. The tap. Global mode captures everyone but us; music-only mode
-        //    (while learning an unknown track) captures just the playing music
-        //    app, so its measurement can't be polluted by system sounds — those
-        //    play natively, untapped. Never more than one tap on a process at a
-        //    time, so an app's audio is never diverted. Mute behaviour is tunable
-        //    via `defaults write cc.jorviksoftware.Ballast tapMuteBehavior -int
-        //    {0|1|2}` (0 unmuted, 1 muted, 2 muted-when-tapped); default 2.
-        let tapDescription: CATapDescription
-        if tapMode == .musicOnly, let musicProc = musicProcessObject() {
-            tapDescription = CATapDescription(stereoMixdownOfProcesses: [musicProc])
-            blLog("buildGraph: music-only tap on process \(musicProc)")
-        } else {
-            if tapMode == .musicOnly {
-                // Music process vanished between deciding and building — stay global.
-                tapMode = .global
-                blLog("buildGraph: music-only requested but no music process — global tap")
-            }
-            tapDescription = CATapDescription(stereoGlobalTapButExcludeProcesses: [selfProcess])
-        }
+        // 1. The tap. A single global tap captures the whole system mix, excluding
+        //    Ballast itself so there's no feedback loop; every track is measured on
+        //    it. Mute behaviour is tunable via `defaults write
+        //    cc.jorviksoftware.Ballast tapMuteBehavior -int {0|1|2}` (0 unmuted,
+        //    1 muted, 2 muted-when-tapped); default 2.
+        let tapDescription = CATapDescription(stereoGlobalTapButExcludeProcesses: [selfProcess])
         tapDescription.name = "Ballast"
         let muteRaw = (UserDefaults.standard.object(forKey: "tapMuteBehavior") as? Int) ?? 2
         let muteBehavior: CATapMuteBehavior = (muteRaw == 0) ? .unmuted : (muteRaw == 1 ? .muted : .mutedWhenTapped)
@@ -806,8 +714,7 @@ final class BallastEngine {
         blLog("io: writes=\(ring.dbgWriteCallbacks.load(ordering: .relaxed)) reads=\(ring.dbgReadCallbacks.load(ordering: .relaxed))"
             + " depth=\(ring.availableFrames) over=\(ring.dbgOverruns.load(ordering: .relaxed)) under=\(ring.dbgUnderruns.load(ordering: .relaxed))"
             + " inPeak=\(String(format: "%.4f", ring.dbgInputPeak)) outPeak=\(String(format: "%.4f", processor.dbgOutPeak))"
-            + " frames=\(processor.dbgFrames) gain=\(String(format: "%.2f", processor.meterGainDB))dB srcLoud=\(String(format: "%.1f", processor.meterSourceLoudness))"
-            + " tap=\(tapMode == .musicOnly ? "music" : "global") iso=\(currentTrackIsolated) viable=\(musicOnlyTapViable)")
+            + " frames=\(processor.dbgFrames) gain=\(String(format: "%.2f", processor.meterGainDB))dB srcLoud=\(String(format: "%.1f", processor.meterSourceLoudness))")
     }
 
     private func stopDebugTimer() {
@@ -833,11 +740,8 @@ final class BallastEngine {
     }
 
     private func handleDeviceChange() {
-        // A new output device is a fresh Core Audio path — give the music-only
-        // tap and the heal-burst counter a clean slate rather than carrying a
-        // prior device's failures over.
-        musicOnlyTapViable = true
-        musicOnlyFailures = 0
+        // A new output device is a fresh Core Audio path — give the heal-burst
+        // counter a clean slate rather than carrying a prior device's failures over.
         consecutiveHeals = 0
         lastHealAt = 0
         rebuildGraph(reason: "default output device changed")
@@ -941,39 +845,22 @@ final class BallastEngine {
         }
     }
 
-    /// Recover from a dead tap. On the global tap, rebuild it — the proven path.
-    /// On the music-only tap (the newer, riskier one) don't gamble on a rebuild
-    /// that may fail the same way: disable music-only for the rest of the session
-    /// and revert to the global tap. This track's learning is forfeited (retried
-    /// next play), but audio can never be lost for more than a moment on a
-    /// machine where the music-only tap doesn't deliver.
+    /// Recover from a dead tap by rebuilding the graph. Counts rebuilds that come
+    /// in quick succession: a lone transient recovers in one and the burst never
+    /// grows, but a wedged audio system keeps failing — past the cap we stand down
+    /// instead of thrashing (see `standDown`).
     private func heal(reason: String) {
         silentSeconds = 0
-        if tapMode == .musicOnly {
-            musicOnlyFailures += 1
-            musicOnlyDisabledAt = ProcessInfo.processInfo.systemUptime
-            let giveUp = musicOnlyFailures >= Self.musicOnlyMaxFailures
-            blLog("watchdog: \(reason) — music-only tap not delivering (failure \(musicOnlyFailures)/\(Self.musicOnlyMaxFailures)); "
-                + (giveUp ? "off for the session, " : "will retry, ") + "reverting to global")
-            musicOnlyTapViable = false
-            tapMode = .global
-            currentTrackIsolated = false
-            rebuildGraph(reason: "music-only → global (self-heal)")
-        } else {
-            // Count rebuilds that come in quick succession. A lone transient
-            // recovers in one and the burst never grows; a wedged audio system
-            // keeps failing, and past the cap we stand down instead of thrashing.
-            let now = ProcessInfo.processInfo.systemUptime
-            if now - lastHealAt > Self.healBurstResetSeconds { consecutiveHeals = 0 }
-            lastHealAt = now
-            consecutiveHeals += 1
-            if consecutiveHeals >= Self.maxConsecutiveHeals {
-                standDown(reason: reason)
-                return
-            }
-            blLog("watchdog: \(reason) — self-healing (global tap rebuild \(consecutiveHeals)/\(Self.maxConsecutiveHeals))")
-            rebuildGraph(reason: "global tap rebuild")
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastHealAt > Self.healBurstResetSeconds { consecutiveHeals = 0 }
+        lastHealAt = now
+        consecutiveHeals += 1
+        if consecutiveHeals >= Self.maxConsecutiveHeals {
+            standDown(reason: reason)
+            return
         }
+        blLog("watchdog: \(reason) — self-healing (global tap rebuild \(consecutiveHeals)/\(Self.maxConsecutiveHeals))")
+        rebuildGraph(reason: "global tap rebuild")
     }
 
     /// Give up after repeated rebuilds that never restored audio: the audio

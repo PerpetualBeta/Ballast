@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 680" role="img"
-     aria-label="How Ballast levels audio: every app's audio is captured by a Core Audio process tap that mutes the original path — system-wide, or just the music app while learning a new track so system sounds can't pollute the measurement — buffered through an aggregate device and lock-free ring clocked by the output device, then measured and levelled per track by the loudness engine, which learns each track into an on-disk library and self-maintains it, before playing to your speakers or headphones.">
+     aria-label="How Ballast levels audio: every app's audio is captured by a single system-wide Core Audio process tap that mutes the original path, buffered through an aggregate device and lock-free ring clocked by the output device, then measured and levelled per track by the loudness engine, which learns each track into an on-disk library and self-maintains it, before playing to your speakers or headphones.">
   <title>How Ballast levels your audio</title>
   <style>
     text { font-family: system-ui, -apple-system, sans-serif; }
@@ -35,7 +35,7 @@
   <!-- Process tap -->
   <rect x="100" y="192" width="260" height="64" rx="11" class="box"/>
   <text x="230" y="217" text-anchor="middle" class="h">Core Audio process tap</text>
-  <text x="230" y="235" text-anchor="middle" class="b">system-wide, or music-only while learning</text>
+  <text x="230" y="235" text-anchor="middle" class="b">system-wide — all audio but Ballast</text>
   <text x="230" y="250" text-anchor="middle" class="t">AudioHardwareCreateProcessTap</text>
 
   <line x1="230" y1="256" x2="230" y2="300" class="arrow" marker-end="url(#a)"/>
