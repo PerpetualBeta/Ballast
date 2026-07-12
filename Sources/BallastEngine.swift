@@ -90,9 +90,12 @@ final class BallastEngine {
     private var debugTimer: Timer?
 
     // Self-heal watchdog: the capture graph can silently stop delivering audio —
-    // the tap goes quiet even though the player is still playing (seen around
-    // track boundaries). Core Audio doesn't report it; the only symptom is that
-    // the input side has heard nothing for longer than any real gap in music.
+    // the tap goes quiet even though the player is still playing. Core Audio
+    // doesn't report it; the symptom is a stalled input IOProc or an abrupt drop
+    // to silence. The hard part is NOT mistaking genuine musical silence (a
+    // fade-out, a quiet interlude) for a broken tap — told apart by the descent
+    // (music fades gradually; a dead tap cliffs to zero) and capped so it can
+    // never thrash the graph.
     private static let watchdogInterval = 1.0
     // Well beyond the longest silence a *playing* track realistically contains,
     // so ordinary quiet passages and inter-song gaps never trip a false rebuild.
@@ -104,8 +107,23 @@ final class BallastEngine {
     // gate (`hasAudioSignal`), which answers a different question.
     private static let watchdogSilenceDBFS = -90.0
     private static let watchdogSilencePeak = Float(pow(10.0, watchdogSilenceDBFS / 20.0))
+    // The −60 dBFS loudness gate as a sample peak. The band between it and the
+    // silence floor is "quiet but present" — where a fade-out or a soft passage
+    // lives on its way down. A *dead* tap never passes through this band; it
+    // cliffs from healthy straight to zero.
+    private static let loudnessGatePeak = Float(pow(10.0, LoudnessProcessor.silenceGateLUFS / 20.0))
+    // Consecutive quiet-but-present ticks that mark a *gradual* descent into
+    // silence — i.e. a genuine musical fade (a fade-out or a quiet interlude),
+    // never a broken tap. At the 1 s tick that's ≥ 2 s of ramp.
+    private static let fadeRampTicks = 2
+    // Cap on rebuild attempts for an *abrupt* silence within one episode, so a
+    // silence we can't explain can never thrash the graph the way a fade once
+    // did (11 rebuilds in 51 s). Resets when signal returns.
+    private static let maxSilenceHeals = 2
     private var watchdogTimer: Timer?
     private var silentSeconds = 0.0
+    private var fadingTicks = 0          // consecutive quiet-but-present ticks (a fade in progress)
+    private var silenceHeals = 0         // rebuilds spent on the current abrupt-silence episode
     private var lastWatchdogWrites: UInt64 = 0
 
     private var trackChangeObservers: [NSObjectProtocol] = []
@@ -780,7 +798,7 @@ final class BallastEngine {
 
     private func startWatchdog() {
         guard watchdogTimer == nil else { return }
-        silentSeconds = 0
+        silentSeconds = 0; fadingTicks = 0; silenceHeals = 0
         lastWatchdogWrites = ring?.dbgWriteCallbacks.load(ordering: .relaxed) ?? 0
         let t = Timer.scheduledTimer(withTimeInterval: Self.watchdogInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.watchdogTick() }
@@ -791,7 +809,7 @@ final class BallastEngine {
     private func stopWatchdog() {
         watchdogTimer?.invalidate()
         watchdogTimer = nil
-        silentSeconds = 0
+        silentSeconds = 0; fadingTicks = 0; silenceHeals = 0
     }
 
     private func watchdogTick() {
@@ -799,7 +817,7 @@ final class BallastEngine {
         // Only judge the graph dead while the player insists a track is playing —
         // a genuine pause/stop legitimately produces silence, as does a browser
         // that simply isn't making sound.
-        guard playerActive, isPlaying else { silentSeconds = 0; return }
+        guard playerActive, isPlaying else { silentSeconds = 0; fadingTicks = 0; silenceHeals = 0; return }
 
         let writes = ring.dbgWriteCallbacks.load(ordering: .relaxed)
         let inputFiring = writes != lastWatchdogWrites
@@ -813,14 +831,36 @@ final class BallastEngine {
             return
         }
 
-        // Firing but silent: the tap is alive yet delivering nothing though the
-        // player says a track is playing. Tolerate real quiet passages, then heal.
-        if ring.dbgInputPeak > Self.watchdogSilencePeak {
+        // Firing but not loud: the tap is alive yet quiet though the player says a
+        // track is playing. The hard part is telling a *broken* tap (delivering
+        // zeros) from *genuine* silence in the music — a fade-out, or a quiet
+        // interlude mid-track (a real one cost 11 rebuilds in 51 s). The tell is
+        // the descent: music fades *gradually* through the −60…−90 dBFS band; a
+        // dead tap cliffs from healthy straight to zero, skipping it.
+        let peak = ring.dbgInputPeak
+        if peak > Self.loudnessGatePeak {
+            // Clear signal — normal playback. Reset every silence tracker.
+            silentSeconds = 0; fadingTicks = 0; silenceHeals = 0
+        } else if peak > Self.watchdogSilencePeak {
+            // Quiet but present: a fade in progress or a soft passage, not (yet)
+            // hard silence. Count the ramp; don't accumulate toward a heal.
+            silentSeconds = 0; fadingTicks += 1
+        } else if fadingTicks >= Self.fadeRampTicks {
+            // Hard silence we *faded* into — genuine musical silence, never a dead
+            // tap. Leave the graph alone (and the meter intact, so a track that
+            // fades out still measures its whole self and learns).
             silentSeconds = 0
         } else {
+            // Hard silence with no fade before it — an abrupt drop that may be a
+            // dead tap. Heal, but cap attempts so it can't thrash; wait for signal
+            // to return (resets `silenceHeals`) before trying again.
             silentSeconds += Self.watchdogInterval
             if silentSeconds >= Self.watchdogHealSeconds {
-                heal(reason: "tap silent \(Int(silentSeconds))s while playing (inPeak=\(String(format: "%.4f", ring.dbgInputPeak)))")
+                if silenceHeals < Self.maxSilenceHeals {
+                    silenceHeals += 1
+                    heal(reason: "tap silent \(Int(silentSeconds))s while playing (inPeak=\(String(format: "%.4f", peak)))")
+                }
+                silentSeconds = 0
             }
         }
     }
