@@ -196,6 +196,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item)
         }
 
+        // If the engine stood itself down on an audio-system fault, say so at the
+        // top of the menu. The slashed-waveform icon already shows levelling is
+        // off; this disabled line explains it wasn't the user who switched it off,
+        // and re-enabling (Level Loudness) clears it once the system is healthy.
+        if !engine.isActive, let fault = engine.faultMessage {
+            let header = NSMenuItem(title: fault, action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.insertItem(header, at: 0)
+            menu.insertItem(.separator(), at: 1)
+        }
     }
 
 

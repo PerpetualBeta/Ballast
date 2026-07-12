@@ -47,6 +47,12 @@ final class BallastEngine {
     /// state changes, so the menu-bar title can refresh.
     var trackDidChange: (() -> Void)?
 
+    /// A short, menu-friendly reason set when the engine stands itself down after
+    /// an unrecoverable audio-system fault (see `standDown`), so the menu can say
+    /// why levelling stopped rather than looking like the user turned it off.
+    /// nil in normal operation; cleared the next time levelling starts cleanly.
+    private(set) var faultMessage: String?
+
     private var tapID = AudioObjectID(0)
     private var inputAggregateID = AudioObjectID(0)
     private var outputDeviceID = AudioObjectID(0)
@@ -120,13 +126,42 @@ final class BallastEngine {
     // silence we can't explain can never thrash the graph the way a fade once
     // did (11 rebuilds in 51 s). Resets when signal returns.
     private static let maxSilenceHeals = 2
+    // A genuine, transient tap death recovers in a single rebuild. If the graph
+    // still isn't delivering audio after this many rebuilds *in quick succession*,
+    // the audio system itself is wedged — a known coreaudiod failure mode, often
+    // needing a `killall coreaudiod` — and rebuilding only deepens it: each
+    // attempt leaks an orphaned tap, and enough of them turn a recoverable stall
+    // into a daemon-level wedge that even quitting the app can't clear. So past
+    // this point we stand down instead (see `standDown`): pull the tap out, which
+    // un-mutes the direct path so playback simply continues *unlevelled* rather
+    // than falling silent, and wait for the user to re-enable once it's healthy.
+    private static let maxConsecutiveHeals = 4
+    // A heal-free run at least this long means the graph recovered, so the next
+    // heal begins a fresh burst rather than counting toward a stand-down. Set
+    // above the 1–5 s spacing between storm heals (a stall heals every tick, an
+    // abrupt silence every `watchdogHealSeconds`) so a real storm always
+    // accumulates in one burst, yet a lone transient followed by healthy playback
+    // never does.
+    private static let healBurstResetSeconds = watchdogHealSeconds * 2
     private var watchdogTimer: Timer?
     private var silentSeconds = 0.0
     private var fadingTicks = 0          // consecutive quiet-but-present ticks (a fade in progress)
     private var silenceHeals = 0         // rebuilds spent on the current abrupt-silence episode
+    private var consecutiveHeals = 0     // global-tap rebuilds in the current burst (→ stand-down)
+    private var lastHealAt = 0.0         // systemUptime of the last global-tap heal
     private var lastWatchdogWrites: UInt64 = 0
 
     private var trackChangeObservers: [NSObjectProtocol] = []
+    // Apple Music / Spotify fire a burst of playerInfo notifications at a track
+    // or playlist boundary (a station announces itself, a stopped/playing pair,
+    // duplicates). Acting on each one rebuilds the audio graph, and several
+    // rebuilds in a fraction of a second are audible as a click. So we coalesce:
+    // record the latest state, settle briefly, then rebuild once for whatever is
+    // actually playing when the dust settles. The window bridges the ~60–130 ms
+    // gaps seen within a burst, yet stays well under a noticeable levelling delay.
+    private static let trackChangeSettleWindow = 0.25
+    private var pendingPlayerState: (playing: Bool, id: TrackIdentity?)?
+    private var trackChangeSettleTimer: Timer?
 
     let library = LoudnessLibrary()
     private var currentKey: String?
@@ -213,8 +248,11 @@ final class BallastEngine {
         currentTrackIsolated = false
         musicOnlyTapViable = true
         musicOnlyFailures = 0
+        consecutiveHeals = 0
+        lastHealAt = 0
         if buildGraph() {
             isActive = true
+            faultMessage = nil
             BallastSettings.isEnabled = true
             registerDeviceChangeListener()
             registerTrackChangeObservers()
@@ -243,6 +281,7 @@ final class BallastEngine {
         isActive = false
         BallastSettings.isEnabled = false
         statusMessage = "Inactive"
+        faultMessage = nil
         outputDeviceName = nil
         isPlaying = false
         playerActive = false
@@ -333,6 +372,9 @@ final class BallastEngine {
     }
 
     private func unregisterTrackChangeObservers() {
+        trackChangeSettleTimer?.invalidate()
+        trackChangeSettleTimer = nil
+        pendingPlayerState = nil
         let centre = DistributedNotificationCenter.default()
         for obs in trackChangeObservers { centre.removeObserver(obs) }
         trackChangeObservers.removeAll()
@@ -352,16 +394,47 @@ final class BallastEngine {
         // An empty state is treated as playing (both apps normally send one).
         let playing = state.isEmpty || state.caseInsensitiveCompare("Playing") == .orderedSame
 
-        guard playing else {
-            // Paused or stopped: hide the title (keep the track loaded so a
-            // resume doesn't re-level/re-learn), and let auto-relevel take over
-            // in case another source is now playing.
+        var id: TrackIdentity?
+        if playing {
+            guard let parsed = trackIdentity(note) else { return }
+            // An Apple Music streaming station announces the *station itself* as a
+            // pseudo-track with no duration (e.g. "…'s Station", heard 0s of 0s)
+            // moments before the real song. Acting on it forces a needless
+            // tap-swap rebuild, so ignore anything with no real duration.
+            guard parsed.durationMS > 0 else {
+                blLog("ignoring context entry \(parsed.key) (no duration)")
+                return
+            }
+            id = parsed
+        }
+
+        // Coalesce the notification burst (see `trackChangeSettleWindow`): record
+        // the latest state and (re)arm the settle timer. The graph is rebuilt just
+        // once, in `applyPendingPlayerState`, for the track playing when it fires.
+        pendingPlayerState = (playing: playing, id: id)
+        trackChangeSettleTimer?.invalidate()
+        trackChangeSettleTimer = Timer.scheduledTimer(withTimeInterval: Self.trackChangeSettleWindow, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.applyPendingPlayerState() }
+        }
+    }
+
+    /// Apply the player state that survived the settle window — exactly one graph
+    /// rebuild per genuine change, no matter how many notifications the burst held.
+    private func applyPendingPlayerState() {
+        trackChangeSettleTimer?.invalidate()
+        trackChangeSettleTimer = nil
+        guard isActive, let pending = pendingPlayerState else { return }
+        pendingPlayerState = nil
+
+        guard pending.playing, let id = pending.id else {
+            // Paused or stopped: hide the title (keep the track loaded so a resume
+            // doesn't re-level/re-learn), and let auto-relevel take over in case
+            // another source is now playing.
             setPlayerActive(false)
             if isPlaying { isPlaying = false; trackDidChange?() }
             return
         }
 
-        guard let id = trackIdentity(note) else { return }
         setPlayerActive(true)
         if id.key == currentKey {
             // Same track: a duplicate notification, or a resume after pause.
@@ -761,9 +834,12 @@ final class BallastEngine {
 
     private func handleDeviceChange() {
         // A new output device is a fresh Core Audio path — give the music-only
-        // tap a clean slate rather than carrying a prior device's failures over.
+        // tap and the heal-burst counter a clean slate rather than carrying a
+        // prior device's failures over.
         musicOnlyTapViable = true
         musicOnlyFailures = 0
+        consecutiveHeals = 0
+        lastHealAt = 0
         rebuildGraph(reason: "default output device changed")
     }
 
@@ -884,8 +960,46 @@ final class BallastEngine {
             currentTrackIsolated = false
             rebuildGraph(reason: "music-only → global (self-heal)")
         } else {
-            blLog("watchdog: \(reason) — self-healing (global tap rebuild)")
+            // Count rebuilds that come in quick succession. A lone transient
+            // recovers in one and the burst never grows; a wedged audio system
+            // keeps failing, and past the cap we stand down instead of thrashing.
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - lastHealAt > Self.healBurstResetSeconds { consecutiveHeals = 0 }
+            lastHealAt = now
+            consecutiveHeals += 1
+            if consecutiveHeals >= Self.maxConsecutiveHeals {
+                standDown(reason: reason)
+                return
+            }
+            blLog("watchdog: \(reason) — self-healing (global tap rebuild \(consecutiveHeals)/\(Self.maxConsecutiveHeals))")
             rebuildGraph(reason: "global tap rebuild")
         }
+    }
+
+    /// Give up after repeated rebuilds that never restored audio: the audio
+    /// system is wedged and rebuilding only makes it worse (each attempt leaks an
+    /// orphaned tap). Remove the tap — which un-mutes the direct path, so playback
+    /// continues *unlevelled* instead of silent — go inactive, and surface why so
+    /// the user can reset the audio system and turn levelling back on. Deliberately
+    /// does NOT finalize the current track: the measurement during a wedge is
+    /// silence and must never reach the library. `BallastSettings.isEnabled` is
+    /// left on, so a relaunch (with a healthy audio system) resumes levelling on
+    /// its own — this is a runtime fault, not the user choosing to switch off.
+    private func standDown(reason: String) {
+        blLog("watchdog: \(reason) — audio system wedged after \(consecutiveHeals) rebuilds; standing down. "
+            + "Tap removed, audio restored (unlevelled). Turn Level Loudness back on once the audio system is "
+            + "healthy — quitting the audio app, or Terminal's \u{201C}killall coreaudiod\u{201D}, clears the wedge.")
+        stopDebugTimer()
+        stopWatchdog()
+        unregisterDeviceChangeListener()
+        unregisterTrackChangeObservers()
+        teardownGraph()
+        isActive = false
+        isPlaying = false
+        playerActive = false
+        consecutiveHeals = 0
+        statusMessage = "Levelling paused — the audio system needs a reset"
+        faultMessage = "Paused \u{2014} audio system needs a reset"
+        stateDidChange?()
     }
 }
