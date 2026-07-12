@@ -62,12 +62,15 @@ final class NowPlayingModel: ObservableObject {
             let center = DistributedNotificationCenter.default()
             for name in ["com.apple.Music.playerInfo", "com.apple.iTunes.playerInfo", "com.spotify.client.PlaybackStateChanged"] {
                 observers.append(center.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] note in
-                    self?.applyNotification(note)
+                    // Scheduled on `.main`, so this fires on the main actor — assert it,
+                    // so the main-actor-isolated call is statically checked, not warned.
+                    MainActor.assumeIsolated { self?.applyNotification(note) }
                 })
             }
         }
         if timer == nil {
-            let t = Timer(timeInterval: 0.08, repeats: true) { [weak self] _ in self?.tick() }
+            // Added to `RunLoop.main`, so the timer fires on the main actor.
+            let t = Timer(timeInterval: 0.08, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.tick() } }
             RunLoop.main.add(t, forMode: .common)
             timer = t
         }
