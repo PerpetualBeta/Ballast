@@ -20,6 +20,7 @@ enum BallastSettings {
         static let visualizerMode       = "visualizerMode"
         static let visualizerKeepOnTop  = "visualizerKeepOnTop"
         static let visualizerColour     = "visualizerColourSource"
+        static let excludedApps         = "excludedApps"
     }
 
     // MARK: Design bounds & defaults
@@ -103,6 +104,12 @@ enum BallastSettings {
     static var visualizerColourSource: String {
         get { UserDefaults.standard.string(forKey: Key.visualizerColour) ?? "builtin" }
         set { UserDefaults.standard.set(newValue, forKey: Key.visualizerColour) }
+    }
+
+    /// Bundle IDs of apps the user has excluded from levelling (see `AppExclusions`).
+    static var excludedBundleIDs: [String] {
+        get { UserDefaults.standard.stringArray(forKey: Key.excludedApps) ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: Key.excludedApps) }
     }
 }
 

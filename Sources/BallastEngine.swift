@@ -107,6 +107,7 @@ final class BallastEngine {
     private var lastWatchdogWrites: UInt64 = 0
 
     private var trackChangeObservers: [NSObjectProtocol] = []
+    private var appLaunchObservers: [NSObjectProtocol] = []
     // Apple Music / Spotify fire a burst of playerInfo notifications at a track
     // or playlist boundary (a station announces itself, a stopped/playing pair,
     // duplicates). Acting on each one rebuilds the audio graph, and several
@@ -206,6 +207,7 @@ final class BallastEngine {
             BallastSettings.isEnabled = true
             registerDeviceChangeListener()
             registerTrackChangeObservers()
+            registerAppLaunchObservers()
             setPlayerActive(false)
             startDebugTimerIfNeeded()
             startWatchdog()
@@ -227,6 +229,7 @@ final class BallastEngine {
         stopWatchdog()
         unregisterDeviceChangeListener()
         unregisterTrackChangeObservers()
+        unregisterAppLaunchObservers()
         teardownGraph()
         isActive = false
         BallastSettings.isEnabled = false
@@ -324,6 +327,42 @@ final class BallastEngine {
         let centre = DistributedNotificationCenter.default()
         for obs in trackChangeObservers { centre.removeObserver(obs) }
         trackChangeObservers.removeAll()
+    }
+
+    // MARK: App exclusions
+
+    /// Rebuild the tap when an EXCLUDED app launches (so its new PID joins the
+    /// exclude set) or quits (so a stale one is dropped) — otherwise a game/DAW
+    /// opened after levelling started would be levelled until an unrelated rebuild.
+    private func registerAppLaunchObservers() {
+        guard appLaunchObservers.isEmpty else { return }
+        let centre = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            let obs = centre.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                Task { @MainActor in self?.handleAppLaunchOrQuit(note) }
+            }
+            appLaunchObservers.append(obs)
+        }
+    }
+
+    private func unregisterAppLaunchObservers() {
+        let centre = NSWorkspace.shared.notificationCenter
+        for obs in appLaunchObservers { centre.removeObserver(obs) }
+        appLaunchObservers.removeAll()
+    }
+
+    private func handleAppLaunchOrQuit(_ note: Notification) {
+        guard isActive else { return }
+        let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        guard AppExclusions.contains(app?.bundleIdentifier) else { return }
+        rebuildGraph(reason: "excluded app \(app?.bundleIdentifier ?? "?") launched/quit")
+    }
+
+    /// The exclusion list changed in Settings — rebuild the tap so it takes effect
+    /// at once. No-op while levelling is off; the next start reads the fresh list.
+    func reloadExclusions() {
+        guard isActive else { return }
+        rebuildGraph(reason: "exclusions changed")
     }
 
     private struct TrackIdentity {
@@ -510,7 +549,16 @@ final class BallastEngine {
         //    it. Mute behaviour is tunable via `defaults write
         //    cc.jorviksoftware.Ballast tapMuteBehavior -int {0|1|2}` (0 unmuted,
         //    1 muted, 2 muted-when-tapped); default 2.
-        let tapDescription = CATapDescription(stereoGlobalTapButExcludeProcesses: [selfProcess])
+        // Exclude Ballast itself (no feedback), plus any apps the user chose not to
+        // level (games / DAWs / calls). Bundle IDs are resolved to their running
+        // processes here; the engine rebuilds when an excluded app launches or
+        // quits, so a freshly-launched one is caught too.
+        var excludeProcesses = [selfProcess]
+        for pid in AppExclusions.runningPIDs() {
+            if let obj = CoreAudioSupport.processObject(forPID: pid) { excludeProcesses.append(obj) }
+        }
+        blLog("buildGraph: excluding self + \(excludeProcesses.count - 1) user app process(es)")
+        let tapDescription = CATapDescription(stereoGlobalTapButExcludeProcesses: excludeProcesses)
         tapDescription.name = "Ballast"
         let muteRaw = (UserDefaults.standard.object(forKey: "tapMuteBehavior") as? Int) ?? 2
         let muteBehavior: CATapMuteBehavior = (muteRaw == 0) ? .unmuted : (muteRaw == 1 ? .muted : .mutedWhenTapped)
@@ -823,6 +871,7 @@ final class BallastEngine {
         stopWatchdog()
         unregisterDeviceChangeListener()
         unregisterTrackChangeObservers()
+        unregisterAppLaunchObservers()
         teardownGraph()
         isActive = false
         isPlaying = false

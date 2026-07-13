@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 /// App-specific settings, dropped into `JorvikSettingsView`'s form (which adds
 /// the shared "Launch at Login" section itself).
@@ -15,6 +16,7 @@ struct BallastSettingsContent: View {
     @State private var vizMode: String
     @State private var vizOnTop: Bool
     @State private var vizColour: String
+    @State private var excluded: [AppExclusions.Info]
     @State private var showResetConfirm = false
     @State private var showResetLibraryConfirm = false
 
@@ -28,6 +30,7 @@ struct BallastSettingsContent: View {
         _vizMode = State(initialValue: BallastSettings.visualizerMode)
         _vizOnTop = State(initialValue: BallastSettings.visualizerKeepOnTop)
         _vizColour = State(initialValue: BallastSettings.visualizerColourSource)
+        _excluded = State(initialValue: AppExclusions.excludedInfos())
     }
 
     private var learnedCountText: String {
@@ -77,6 +80,46 @@ struct BallastSettingsContent: View {
             Text("Ballast brings every track to your comfort level — quieter tracks up, louder tracks down — so you can set the volume once and leave it. It learns each track as you listen, so the more you play, the more consistent your music becomes. \u{201C}Maximum adjustment\u{201D} caps how far it will push a track.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+
+        Section("Do Not Level") {
+            if excluded.isEmpty {
+                Text("Nothing excluded \u{2014} Ballast levels all system audio.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                ForEach(excluded) { app in
+                    HStack(spacing: 8) {
+                        Image(nsImage: app.icon).resizable().frame(width: 18, height: 18)
+                        Text(app.name)
+                        Spacer()
+                        Button {
+                            AppExclusions.remove(app.bundleID)
+                            excluded = AppExclusions.excludedInfos()
+                            delegate.engine.reloadExclusions()
+                        } label: {
+                            Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Level \(app.name) again")
+                    }
+                }
+            }
+
+            Menu("Add App\u{2026}") {
+                let running = AppExclusions.addableRunningApps()
+                if running.isEmpty {
+                    Text("No other apps are running")
+                } else {
+                    ForEach(running) { app in
+                        Button(app.name) { exclude(app.bundleID) }
+                    }
+                }
+                Divider()
+                Button("Choose Application\u{2026}") { chooseApplication() }
+            }
+
+            Text("Audio from these apps is left completely untouched \u{2014} handy for games, DAWs, or video calls that set their own levels. Everything else is still levelled, and changes take effect immediately.")
+                .font(.caption).foregroundStyle(.secondary)
         }
 
         PermissionSection()
@@ -162,6 +205,27 @@ struct BallastSettingsContent: View {
         // Standard Jorvik menu-bar sections.
         MenuBarVisibilitySettings()
         MenuBarPillSettings { delegate.updateIcon() }
+    }
+
+    private func exclude(_ bundleID: String) {
+        AppExclusions.add(bundleID)
+        excluded = AppExclusions.excludedInfos()
+        delegate.engine.reloadExclusions()
+    }
+
+    /// Browse for an app that isn't currently running (so it's not in the menu).
+    private func chooseApplication() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.prompt = "Exclude"
+        panel.message = "Choose an app whose audio Ballast should leave untouched."
+        guard panel.runModal() == .OK, let url = panel.url,
+              let bundle = Bundle(url: url), let bid = bundle.bundleIdentifier else { return }
+        exclude(bid)
     }
 
 }
