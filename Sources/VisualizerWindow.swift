@@ -83,6 +83,7 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
         vuView?.stop()
         nowPlayingModel?.stop()
         window?.orderOut(nil)
+        syncMetalViewActive()          // window no longer visible → pause the FFT loop
     }
 
     func applySettings() {
@@ -103,6 +104,18 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
         let responder: NSResponder? = mode == .vu ? vuView
             : (mode == .nowplaying ? nowPlayingHost : metalView)
         window?.makeFirstResponder(responder)
+        syncMetalViewActive()
+    }
+
+    /// Run the Metal FFT render loop ONLY while the visualiser is genuinely on-screen
+    /// in a shader mode. Pausing on hide alone is not enough: an occluded/backgrounded
+    /// MTKView loses its vsync throttle and spins even FASTER, so we also gate on the
+    /// window's occlusion state (behind another app, on another Space, minimised → paused).
+    /// Idle/occluded cost drops to ~0; the loop resumes the moment the window is revealed.
+    private func syncMetalViewActive() {
+        let mode = renderer?.mode ?? .aurora
+        let visible = (window?.isVisible ?? false) && (window?.occlusionState.contains(.visible) ?? false)
+        metalView?.isPaused = !(visible && mode.isShader)
     }
 
     func refreshPalette() {
@@ -126,6 +139,7 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
         view.colorPixelFormat = MTLPixelFormat.bgra8Unorm
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         view.preferredFramesPerSecond = 60
+        view.isPaused = true            // start paused; syncMetalViewActive() runs the FFT loop only while genuinely on-screen
         view.delegate = r
         view.controller = self
         view.autoresizingMask = [.width, .height]
@@ -288,5 +302,13 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
 
     func windowWillClose(_ notification: Notification) {
         VisualizerFeed.shared.active.store(false, ordering: .relaxed)
+        metalView?.isPaused = true     // stop the FFT loop as the window closes
+    }
+
+    /// Pause/resume the FFT render loop as the window is occluded/revealed (covered by
+    /// another app, moved to another Space, minimised). This is the case that pinned a
+    /// full core behind the foreground app.
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        syncMetalViewActive()
     }
 }
