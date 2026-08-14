@@ -10,6 +10,19 @@ Ballast measures each track's true loudness as you listen and remembers it, so t
 
 Ballast uses Core Audio process taps (macOS 14.2+) and the `Synchronization` framework (15+), so there's no virtual audio driver and nothing to install into the system.
 
+## Installation
+
+Two formats on every release — both signed and notarised, pick whichever suits:
+
+- **[Installer (`.pkg`)](https://github.com/PerpetualBeta/Ballast/releases/latest/download/Ballast.pkg)** — recommended for first-time installs. Double-click to run; macOS Installer places the app in `/Applications` without quarantine or App Translocation.
+- **[Download (`.zip`)](https://github.com/PerpetualBeta/Ballast/releases/latest)** — unzip and drag `Ballast.app` to your Applications folder.
+
+Or install it with [Homebrew](https://brew.sh):
+
+```sh
+brew install --cask perpetualbeta/jorvik/ballast
+```
+
 ## How It Works
 
 Every app's audio is mixed and sent to your output device. Ballast places a **Core Audio process tap** on that mix — the modern, driver-free mechanism Apple provides for system audio — measures its loudness, applies a gentle gain, and plays the result back through your normal output device. Your selected output stays selected; there's nothing to route.
