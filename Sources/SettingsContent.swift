@@ -49,19 +49,37 @@ struct BallastSettingsContent: View {
 
             // Comfort level — a plain quieter ←→ louder scale, with the
             // technical LUFS figure kept as a small detail.
+            //
+            // The ends are named underneath the track rather than either side of
+            // it. Flanking the slider made this the only control in the window
+            // that wasn't the width of its row: the labels took their width out
+            // of the slider's, so it ran visibly short of the one below it, and
+            // the form's own label column pulled "Quieter" away to the far left.
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("Comfort level")
                     Spacer()
                     Text(String(format: "%.0f LUFS", target)).foregroundStyle(.secondary).monospacedDigit()
                 }
-                HStack(spacing: 8) {
-                    Text("Quieter").font(.caption2).foregroundStyle(.secondary)
-                    Slider(value: $target, in: BallastSettings.targetLoudnessRange, step: 1)
-                        .onChange(of: target) { _, v in
-                            BallastSettings.targetLoudness = v; delegate.engine.applySettings()
-                        }
-                    Text("Louder").font(.caption2).foregroundStyle(.secondary)
+                Slider(value: $target, in: BallastSettings.targetLoudnessRange, step: 1)
+                    .onChange(of: target) { _, v in
+                        BallastSettings.targetLoudness = v; delegate.engine.applySettings()
+                    }
+                // Wrapped rather than left as a bare HStack: the grouped form
+                // claims the first Text in a row for its label column, which sent
+                // "Quieter" to the far left of the window while "Louder" stayed
+                // with the track. LabeledContent states which column this is, so
+                // the pair sits under the ends of the slider it describes.
+                LabeledContent {
+                    HStack {
+                        Text("Quieter")
+                        Spacer()
+                        Text("Louder")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                } label: {
+                    EmptyView()
                 }
             }
 
