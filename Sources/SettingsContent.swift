@@ -230,58 +230,119 @@ struct BallastSettingsContent: View {
 
 }
 
-/// Audio-capture (system audio recording) permission status + requester,
-/// mirroring the permission section the other Jorvik menu-bar apps show.
+/// Audio-capture and Automation permission rows, in the shape every other Jorvik app
+/// uses: one row per permission — name, spacer, then either the green "Granted" label
+/// or the control that resolves it — with a caption underneath saying why it's wanted.
+///
+/// The `Section` is this view's root, and nothing wraps it. That matters more than it
+/// looks: a `Section` nested inside another view is no longer a direct child of the
+/// form, so it loses its header treatment and renders as a boxed group with a centred
+/// title. This section used to be wrapped in a `TimelineView` for its once-a-second
+/// re-read, and that alone is what made it the one part of Ballast's settings that
+/// didn't look like the rest of it.
+///
+/// State comes from JorvikKit's `JorvikPermissionWatcher`, the shared answer to a row
+/// that would otherwise read its permission once and go on telling the user to grant
+/// something they already granted. Neither of these permissions announces its changes,
+/// so here it is the watcher's once-a-second re-read that does the work rather than
+/// backing up an announcement — the Screen Recording case in that file, not the
+/// Accessibility one.
 @MainActor
 private struct PermissionSection: View {
-    var body: some View {
-        // Re-read the (non-observable) TCC status periodically so the row
-        // updates itself right after the user grants access.
-        TimelineView(.periodic(from: .now, by: 1)) { _ in
-            let status = AudioCapturePermission.status
-            Section("Permission") {
-                LabeledContent("System audio access") {
-                    switch status {
-                    case .authorized:   Text("Granted").foregroundStyle(.green)
-                    case .denied:       Text("Denied").foregroundStyle(.red)
-                    case .undetermined: Text("Not granted").foregroundStyle(.secondary)
-                    }
-                }
-                if status != .authorized {
-                    Button(status == .denied ? "Open System Settings\u{2026}" : "Grant Access\u{2026}") {
-                        if status == .denied {
-                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        } else {
-                            AudioCapturePermission.request { _ in }
-                        }
-                    }
-                }
-                Text("Ballast needs permission to read the system audio mix so it can measure and level loudness. Audio is processed on-device in real time and never recorded.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
 
-                let auto = AutomationPermission.combined
-                LabeledContent("Music & Spotify") {
-                    switch auto {
-                    case .authorized:   Text("Granted").foregroundStyle(.green)
-                    case .denied:       Text("Denied").foregroundStyle(.red)
-                    case .notRunning:   Text("\u{2014}").foregroundStyle(.secondary)
-                    case .undetermined: Text("Not requested").foregroundStyle(.secondary)
-                    }
-                }
-                if auto == .denied {
-                    Button("Open System Settings\u{2026}") {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
-                            NSWorkspace.shared.open(url)
+    @StateObject private var audio = JorvikPermissionWatcher {
+        AudioCapturePermission.status == .authorized
+    }
+
+    /// Ballast can raise the audio-capture prompt itself, but only until the user answers
+    /// it once; after that the only route left is System Settings. TCC exposes no "have I
+    /// asked yet" flag, so the answer is remembered here — the same approach ASCII Saver
+    /// takes for the camera.
+    @State private var audioEverAsked: Bool = AudioCapturePermission.status != .undetermined
+
+    /// Two watchers, because the Automation row branches on two independent facts. Ballast
+    /// can't prompt for Automation — macOS raises that itself the first time Ballast speaks
+    /// to a running player — so an outright refusal is the only state with anything to
+    /// offer the user, and it needs watching separately from the grant.
+    @StateObject private var automation = JorvikPermissionWatcher {
+        AutomationPermission.combined == .authorized
+    }
+    @StateObject private var automationRefusal = JorvikPermissionWatcher {
+        AutomationPermission.combined == .denied
+    }
+
+    /// Spelt out because `automationRefusal.isGranted` reads as the opposite of what it
+    /// means: the watcher publishes "the check passed", and this check is for a refusal.
+    private var automationRefused: Bool { automationRefusal.isGranted }
+
+    /// System Settings deep links. Audio capture opens Privacy & Security itself;
+    /// Automation has an anchor of its own. Neither is in `JorvikPermissionWatcher.Pane`,
+    /// which covers the permissions the rest of the suite asks for.
+    private static let privacyPane = "x-apple.systempreferences:com.apple.preference.security?Privacy"
+    private static let automationPane = privacyPane + "_Automation"
+
+    private static func openSettings(pane: String) {
+        guard let url = URL(string: pane) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// The shared "granted" affirmation, so both rows agree to the pixel.
+    private var grantedLabel: some View {
+        Label("Granted", systemImage: "checkmark.circle.fill")
+            .foregroundStyle(.green)
+            .font(.caption)
+    }
+
+    var body: some View {
+        Section("Permissions") {
+            HStack {
+                Text("System audio access")
+                Spacer()
+                if audio.isGranted {
+                    grantedLabel
+                } else if !audioEverAsked {
+                    Button("Grant Access") {
+                        AudioCapturePermission.request { _ in
+                            Task { @MainActor in
+                                audioEverAsked = true
+                                audio.reread()
+                            }
                         }
                     }
-                }
-                Text("Optional. Lets Ballast apply the currently-playing track's level the instant you switch levelling on, by reading what Music or Spotify is playing. Without it, it waits for the next track change.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                } else {
+                    Button("Open System Settings") {
+                        Self.openSettings(pane: Self.privacyPane)
+                    }
+                    .font(.caption)
+                }
             }
+
+            Text("Ballast needs permission to read the system audio mix so it can measure and level loudness. Audio is processed on-device in real time and never recorded.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Text("Music & Spotify")
+                Spacer()
+                if automation.isGranted {
+                    grantedLabel
+                } else if automationRefused {
+                    Button("Open System Settings") {
+                        Self.openSettings(pane: Self.automationPane)
+                    }
+                    .font(.caption)
+                } else {
+                    // Nothing to press: macOS raises the Automation prompt itself, the
+                    // first time Ballast speaks to a running player. True whether or not
+                    // one is running right now, so both cases say the same thing.
+                    Text("Not requested").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            Text("Optional. Lets Ballast apply the currently-playing track's level the instant you switch levelling on, by reading what Music or Spotify is playing. Without it, it waits for the next track change.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
