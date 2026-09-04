@@ -185,8 +185,12 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
         w.collectionBehavior = [.fullScreenNone]
         w.delegate = self
         w.controller = self
-        w.setFrameAutosaveName("BallastVisualizerWindow")
-        if !w.setFrameUsingName("BallastVisualizerWindow") { w.center() }
+        // Deliberately no setFrameAutosaveName. AppKit keys the saved frame by screen
+        // configuration and re-asserts it at launch, so after a display is unplugged and
+        // replugged the window opens at its pre-unplug size. A window opened too large
+        // cannot be shrunk in one Accessibility pass, so RememberMyWindows corrects the
+        // position and never wins back the size. Window geometry belongs to RMW.
+        w.center()
         window = w
 
         let label = NSTextField(labelWithString: "")
