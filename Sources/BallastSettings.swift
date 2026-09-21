@@ -20,6 +20,7 @@ enum BallastSettings {
         static let visualizerMode       = "visualizerMode"
         static let visualizerKeepOnTop  = "visualizerKeepOnTop"
         static let visualizerColour     = "visualizerColourSource"
+        static let visualizerFrame      = "visualizerFrame"
         static let excludedApps         = "excludedApps"
     }
 
@@ -105,6 +106,41 @@ enum BallastSettings {
         get { UserDefaults.standard.string(forKey: Key.visualizerColour) ?? "builtin" }
         set { UserDefaults.standard.set(newValue, forKey: Key.visualizerColour) }
     }
+
+    /// The visualiser's last frame, in screen coordinates, as `NSStringFromRect`.
+    ///
+    /// The window is built the first time it is opened, which is usually long
+    /// after login, so RememberMyWindows logs `Skipping 'cc.jorviksoftware.Ballast'
+    /// — app has no windows` and never restores it. No external window manager
+    /// can place a window that does not exist yet, so Ballast keeps its own.
+    ///
+    /// Deliberately not `setFrameAutosaveName`: AppKit keys an autosaved frame by
+    /// screen configuration and re-asserts it, so unplugging and replugging a
+    /// display reopens the window at its pre-unplug size. This value is read once
+    /// when the window is built, checked against the displays attached at that
+    /// moment, and never re-asserted.
+    static var visualizerFrame: NSRect? {
+        get {
+            guard let s = UserDefaults.standard.string(forKey: Key.visualizerFrame) else { return nil }
+            let r = NSRectFromString(s)
+            return r.isEmpty ? nil : r
+        }
+        set {
+            guard let r = newValue else {
+                UserDefaults.standard.removeObject(forKey: Key.visualizerFrame); return
+            }
+            UserDefaults.standard.set(NSStringFromRect(r), forKey: Key.visualizerFrame)
+        }
+    }
+
+    /// 16:9, and large enough to read the Now Playing text at a glance.
+    static let visualizerDefaultSize = NSSize(width: 720, height: 405)
+
+    /// How much of a restored frame must land on some attached display for it to
+    /// be reused. The window is drag-anywhere, so any decent visible patch can be
+    /// grabbed; the check exists to catch a frame saved on a display that is no
+    /// longer here, which would otherwise open the window somewhere unreachable.
+    static let visualizerMinVisibleFraction: CGFloat = 0.5
 
     /// Bundle IDs of apps the user has excluded from levelling (see `AppExclusions`).
     static var excludedBundleIDs: [String] {

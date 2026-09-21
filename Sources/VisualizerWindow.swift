@@ -134,7 +134,7 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
         }
         renderer = r
 
-        let frame = NSRect(x: 0, y: 0, width: 720, height: 405)
+        let frame = NSRect(origin: .zero, size: BallastSettings.visualizerDefaultSize)
         let view = VisualizerMetalView(frame: frame, device: r.device)
         view.colorPixelFormat = MTLPixelFormat.bgra8Unorm
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
@@ -185,12 +185,20 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
         w.collectionBehavior = [.fullScreenNone]
         w.delegate = self
         w.controller = self
-        // Deliberately no setFrameAutosaveName. AppKit keys the saved frame by screen
-        // configuration and re-asserts it at launch, so after a display is unplugged and
-        // replugged the window opens at its pre-unplug size. A window opened too large
-        // cannot be shrunk in one Accessibility pass, so RememberMyWindows corrects the
-        // position and never wins back the size. Window geometry belongs to RMW.
-        w.center()
+        // Still no setFrameAutosaveName: AppKit keys an autosaved frame by screen
+        // configuration and re-asserts it at launch, so after a display is unplugged
+        // and replugged the window reopens at its pre-unplug size.
+        //
+        // Geometry used to be left to RememberMyWindows. That cannot work: this window
+        // is built the first time the visualiser is opened, which is normally long after
+        // login, so RMW logs `Skipping 'cc.jorviksoftware.Ballast' — app has no windows`
+        // and has nothing to restore. So Ballast keeps the frame itself, reads it once
+        // here, and never re-asserts it.
+        if let restored = Self.usableFrame(BallastSettings.visualizerFrame) {
+            w.setFrame(restored, display: false)
+        } else {
+            w.center()
+        }
         window = w
 
         let label = NSTextField(labelWithString: "")
@@ -307,6 +315,34 @@ final class VisualizerController: NSObject, NSWindowDelegate, NSMenuDelegate {
     func windowWillClose(_ notification: Notification) {
         VisualizerFeed.shared.active.store(false, ordering: .relaxed)
         metalView?.isPaused = true     // stop the FFT loop as the window closes
+        saveFrame()
+    }
+
+    func windowDidMove(_ notification: Notification) { saveFrame() }
+    func windowDidResize(_ notification: Notification) { saveFrame() }
+
+    /// Records where the user put the window, so the next launch can reopen it there.
+    ///
+    /// A full-screen frame is the display, not a choice the user made about this
+    /// window, so it is not recorded — leaving full screen would otherwise be the
+    /// only way to get a usable frame back.
+    private func saveFrame() {
+        guard let window, !window.styleMask.contains(.fullScreen) else { return }
+        BallastSettings.visualizerFrame = window.frame
+    }
+
+    /// A saved frame is only reused if enough of it still lands on an attached
+    /// display. A frame saved on a monitor that has since been unplugged would
+    /// otherwise put the window somewhere the user cannot reach it.
+    private static func usableFrame(_ frame: NSRect?) -> NSRect? {
+        guard let frame else { return nil }
+        let area = frame.width * frame.height
+        guard area > 0 else { return nil }
+        let onScreen = NSScreen.screens.reduce(CGFloat.zero) { total, screen in
+            let overlap = screen.visibleFrame.intersection(frame)
+            return total + (overlap.isNull ? 0 : overlap.width * overlap.height)
+        }
+        return onScreen / area >= BallastSettings.visualizerMinVisibleFraction ? frame : nil
     }
 
     /// Pause/resume the FFT render loop as the window is occluded/revealed (covered by
