@@ -313,54 +313,56 @@ private struct PermissionSection: View {
 
     var body: some View {
         Section("Permissions") {
-            HStack {
-                Text("System audio access")
-                Spacer()
-                if audio.isGranted {
-                    grantedLabel
-                } else if !audioEverAsked {
-                    Button("Grant Access") {
-                        AudioCapturePermission.request { _ in
-                            Task { @MainActor in
-                                audioEverAsked = true
-                                audio.reread()
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("System audio access")
+                    Spacer()
+                    if audio.isGranted {
+                        grantedLabel
+                    } else if !audioEverAsked {
+                        Button("Grant Access") {
+                            AudioCapturePermission.request { _ in
+                                Task { @MainActor in
+                                    audioEverAsked = true
+                                    audio.reread()
+                                }
                             }
                         }
+                        .font(.caption)
+                    } else {
+                        Button("Open System Settings") {
+                            Self.openSettings(pane: Self.privacyPane)
+                        }
+                        .font(.caption)
                     }
-                    .font(.caption)
-                } else {
-                    Button("Open System Settings") {
-                        Self.openSettings(pane: Self.privacyPane)
-                    }
-                    .font(.caption)
                 }
+                Text("Ballast needs permission to read the system audio mix so it can measure and level loudness. Audio is processed on-device in real time and never recorded.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            Text("Ballast needs permission to read the system audio mix so it can measure and level loudness. Audio is processed on-device in real time and never recorded.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack {
-                Text("Music & Spotify")
-                Spacer()
-                if automation.isGranted {
-                    grantedLabel
-                } else if automationRefused {
-                    Button("Open System Settings") {
-                        Self.openSettings(pane: Self.automationPane)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Music & Spotify")
+                    Spacer()
+                    if automation.isGranted {
+                        grantedLabel
+                    } else if automationRefused {
+                        Button("Open System Settings") {
+                            Self.openSettings(pane: Self.automationPane)
+                        }
+                        .font(.caption)
+                    } else {
+                        // Nothing to press: macOS raises the Automation prompt itself, the
+                        // first time Ballast speaks to a running player. True whether or not
+                        // one is running right now, so both cases say the same thing.
+                        Text("Not requested").font(.caption).foregroundStyle(.secondary)
                     }
-                    .font(.caption)
-                } else {
-                    // Nothing to press: macOS raises the Automation prompt itself, the
-                    // first time Ballast speaks to a running player. True whether or not
-                    // one is running right now, so both cases say the same thing.
-                    Text("Not requested").font(.caption).foregroundStyle(.secondary)
                 }
+                Text("Optional. Lets Ballast apply the currently-playing track's level the instant you switch levelling on, by reading what Music or Spotify is playing. Without it, it waits for the next track change.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-
-            Text("Optional. Lets Ballast apply the currently-playing track's level the instant you switch levelling on, by reading what Music or Spotify is playing. Without it, it waits for the next track change.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }
