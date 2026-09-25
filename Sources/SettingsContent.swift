@@ -154,6 +154,7 @@ struct BallastSettingsContent: View {
             Button("Reset Play Counts & Love\u{2026}", role: .destructive) {
                 showResetConfirm = true
             }
+            .frame(maxWidth: .infinity)
             .alert("Reset play counts & love?", isPresented: $showResetConfirm) {
                 Button("Reset", role: .destructive) { delegate.engine.resetPlayStats() }
                 Button("Cancel", role: .cancel) {}
@@ -164,6 +165,7 @@ struct BallastSettingsContent: View {
             Button("Reset Learned Library\u{2026}", role: .destructive) {
                 showResetLibraryConfirm = true
             }
+            .frame(maxWidth: .infinity)
             .alert("Reset the learned library?", isPresented: $showResetLibraryConfirm) {
                 Button("Reset", role: .destructive) { delegate.engine.resetLibrary() }
                 Button("Cancel", role: .cancel) {}
@@ -182,15 +184,23 @@ struct BallastSettingsContent: View {
                     delegate.updateStatusTitle()
                 }
             if showTitle {
-                Stepper(value: $maxTitleLen, in: BallastSettings.maxTitleLengthRange) {
-                    Text("Maximum length: \(maxTitleLen) characters")
+                // The label is an explicit Text and the stepper's own is hidden: a
+                // labelled control inside a VStack is laid out at zero width.
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Maximum length: \(maxTitleLen) characters")
+                        Spacer()
+                        Stepper("Maximum length", value: $maxTitleLen,
+                                in: BallastSettings.maxTitleLengthRange)
+                            .labelsHidden()
+                            .onChange(of: maxTitleLen) { _, v in
+                                BallastSettings.maxTitleLength = v
+                                delegate.updateStatusTitle()
+                            }
+                    }
+                    Text("Titles longer than this are trimmed at a word boundary and end with an ellipsis. Nothing is shown while playback is paused or stopped.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                .onChange(of: maxTitleLen) { _, v in
-                    BallastSettings.maxTitleLength = v
-                    delegate.updateStatusTitle()
-                }
-                Text("Titles longer than this are trimmed at a word boundary and end with an ellipsis. Nothing is shown while playback is paused or stopped.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
         }
 
@@ -216,6 +226,7 @@ struct BallastSettingsContent: View {
                 BallastSettings.visualizerColourSource = v; delegate.visualizer.applySettings()
             }
             Button("Open Visualiser\u{2026}") { delegate.visualizer.show() }
+                .frame(maxWidth: .infinity)
             Text("A real-time visualiser of whatever's playing, in a chromeless resizable window. Right-click it to switch styles, keep it on top, or go full-screen; the arrow keys cycle styles.")
                 .font(.caption).foregroundStyle(.secondary)
         }
